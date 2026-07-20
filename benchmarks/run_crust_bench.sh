@@ -97,6 +97,39 @@ SUMMARY_TSV="${RESULTS_DIR}/summary.tsv"
 log() { printf '[run_crust_bench] %s\n' "$*" >&2; }
 
 # ---------------------------------------------------------------------------
+# Per-step wall-clock limits (seconds)
+# ---------------------------------------------------------------------------
+# A single hung compile-database build, transpile, or `cargo build` must not
+# be able to stall the whole sweep. Each of those steps runs under a
+# wall-clock limit; a step that exceeds its limit is killed and scored as a
+# failure for that project, and the sweep moves on.
+TRANSPILE_TIMEOUT=90    # transpiling one project
+BUILD_TIMEOUT=150       # `cargo build` on the emitted crate
+CDB_TIMEOUT=120         # deriving one project's compile_commands.json
+
+# Resolve a `timeout` implementation (some systems ship coreutils' as
+# `gtimeout`). If neither is present, commands run unbounded.
+if command -v timeout >/dev/null 2>&1; then
+  TIMEOUT_BIN="timeout"
+elif command -v gtimeout >/dev/null 2>&1; then
+  TIMEOUT_BIN="gtimeout"
+else
+  TIMEOUT_BIN=""
+  log "warning: no timeout implementation found — per-project limits disabled"
+fi
+
+# run_bounded <seconds> <cmd...> — run a command under a wall-clock limit when
+# a timeout implementation is available, otherwise run it unbounded.
+run_bounded() {
+  local secs="$1"; shift
+  if [ -n "$TIMEOUT_BIN" ]; then
+    "$TIMEOUT_BIN" "$secs" "$@"
+  else
+    "$@"
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # Step 1: fetch the dataset into the external cache (never into this repo)
 # ---------------------------------------------------------------------------
 fetch_dataset() {
@@ -147,14 +180,20 @@ ensure_compile_commands() {
   [ -f "$cdb" ] && { echo "$cdb"; return 0; }
 
   if [ -f "${project_dir}/CMakeLists.txt" ]; then
-    ( cd "$project_dir" && cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON >/dev/null 2>&1 )
+    # Many dataset projects pin a very old cmake_minimum_required (< 3.5),
+    # which recent cmake refuses to configure. CMAKE_POLICY_VERSION_MINIMUM
+    # lets those old build files configure under a newer cmake; it only
+    # affects how the dataset's C is built, not the transpilation.
+    ( cd "$project_dir" && run_bounded "$CDB_TIMEOUT" cmake -B build \
+        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 >/dev/null 2>&1 )
     [ -f "${project_dir}/build/compile_commands.json" ] && cp "${project_dir}/build/compile_commands.json" "$cdb"
   elif [ -f "${project_dir}/Makefile" ]; then
     if ! command -v bear >/dev/null 2>&1; then
       log "warning: bear not found — cannot derive compile_commands.json for ${project_dir}"
       return 1
     fi
-    ( cd "$project_dir" && bear -- make >/dev/null 2>&1 )
+    ( cd "$project_dir" && run_bounded "$CDB_TIMEOUT" bear -- make >/dev/null 2>&1 )
   fi
 
   [ -f "$cdb" ] && echo "$cdb" || return 1
@@ -182,8 +221,8 @@ score_project() {
 
   # Tier 1: transpile the project and see whether the emitted Rust compiles
   # as its own, self-contained crate.
-  if "$TRANSPILER" --cdb "$cdb" --out-dir "$out_dir" --emit=rust >"${out_dir}/../transpile.log" 2>&1; then
-    if ( cd "$out_dir" && cargo build --offline >../build.log 2>&1 ); then
+  if run_bounded "$TRANSPILE_TIMEOUT" "$TRANSPILER" --cdb "$cdb" --out-dir "$out_dir" --emit=rust >"${out_dir}/../transpile.log" 2>&1; then
+    if ( cd "$out_dir" && run_bounded "$BUILD_TIMEOUT" cargo build --offline >../build.log 2>&1 ); then
       tier1="pass"
     fi
   fi
