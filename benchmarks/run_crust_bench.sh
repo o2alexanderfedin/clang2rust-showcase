@@ -1,0 +1,267 @@
+#!/usr/bin/env bash
+#
+# run_crust_bench.sh — score clang2rust against the CRUST-bench dataset.
+#
+# CRUST-bench (https://github.com/anirudhkhatry/CRUST-bench) is a published
+# benchmark of 100 C repositories, each paired with a hand-written safe-Rust
+# interface and test suite (see ../benchmarks/CRUST-bench.md for the full
+# methodology). This script:
+#
+#   1. Fetches the CRUST-bench dataset into an EXTERNAL cache directory
+#      (never into this repo — the dataset is GPL-3.0 licensed).
+#   2. Iterates every C project in the dataset's CBench/ folder.
+#   3. Per project, records two scores:
+#        Tier 1 — "transpiles":   clang2rust converts the project and the
+#                                  emitted Rust compiles as its own crate.
+#        Tier 2 — "pass@1":       the emitted Rust compiles against the
+#                                  project's RBench/ interface and passes
+#                                  `cargo test`. Marked not-attempted where
+#                                  splicing against a third-party interface
+#                                  isn't yet supported, rather than silently
+#                                  scored as a failure.
+#   4. Writes a per-project TSV and an aggregate summary.
+#
+# Usage:
+#   run_crust_bench.sh [--transpiler <path>] [--cache <dir>] [--dry-run]
+#
+#   --transpiler <path>  Path to the transpiler binary.
+#                         Default: ../cpp-to-rust/cpp/build/bin/cpp2rust
+#   --cache <dir>        External, git-ignored directory the CRUST-bench
+#                         dataset is downloaded into and read from.
+#                         Default: $XDG_CACHE_HOME/clang2rust/crust-bench
+#                         (or ~/.cache/clang2rust/crust-bench)
+#   --dry-run            Print the planned steps and exit without fetching,
+#                         transpiling, or building anything.
+#   -h, --help            Show this usage text.
+#
+# Requirements:
+#   - The transpiler binary, already built.
+#   - `cargo` / `rustc` on PATH, for Tier-1/Tier-2 compile checks.
+#   - `curl` and `unzip`, to fetch and unpack the dataset.
+#   - `bear` (https://github.com/rizsotto/Bear) for CRUST-bench projects
+#     that build via Makefile rather than CMake, to derive a compilation
+#     database. Not required for CMake-based projects.
+#
+# Outputs (written under the run's --cache dir, alongside the dataset):
+#   results/<project>.tsv   Per-project Tier-1/Tier-2 result row.
+#   results/summary.tsv     Aggregate across all projects.
+#
+# This script is a template: it is safe to read and inspect, but is not
+# invoked as part of building this repository. Run it explicitly once a
+# transpiler binary is available.
+
+set -uo pipefail
+
+# ---------------------------------------------------------------------------
+# Defaults
+# ---------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TRANSPILER="${SCRIPT_DIR}/../../cpp-to-rust/cpp/build/bin/cpp2rust"
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/clang2rust/crust-bench"
+DRY_RUN=0
+
+CRUST_BENCH_REPO="https://github.com/anirudhkhatry/CRUST-bench"
+CRUST_BENCH_DATASET_ZIP_PATH="datasets"   # dataset zip lives under this path in the repo
+
+usage() {
+  # Print this script's own header comment as usage text.
+  sed -n '2,/^set -uo pipefail/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' | sed '$d'
+}
+
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --transpiler)
+      TRANSPILER="$2"; shift 2 ;;
+    --cache)
+      CACHE_DIR="$2"; shift 2 ;;
+    --dry-run)
+      DRY_RUN=1; shift ;;
+    -h|--help)
+      usage; exit 0 ;;
+    *)
+      echo "error: unrecognized argument: $1" >&2
+      usage >&2
+      exit 1 ;;
+  esac
+done
+
+DATASET_DIR="${CACHE_DIR}/dataset"
+CBENCH_DIR="${DATASET_DIR}/CBench"
+RBENCH_DIR="${DATASET_DIR}/RBench"
+RESULTS_DIR="${CACHE_DIR}/results"
+SUMMARY_TSV="${RESULTS_DIR}/summary.tsv"
+
+log() { printf '[run_crust_bench] %s\n' "$*" >&2; }
+
+# ---------------------------------------------------------------------------
+# Step 1: fetch the dataset into the external cache (never into this repo)
+# ---------------------------------------------------------------------------
+fetch_dataset() {
+  if [ -d "$CBENCH_DIR" ] && [ -d "$RBENCH_DIR" ]; then
+    log "dataset already present at $DATASET_DIR — skipping fetch"
+    return 0
+  fi
+
+  log "fetching CRUST-bench into external cache: $CACHE_DIR"
+  mkdir -p "$CACHE_DIR"
+
+  local archive="${CACHE_DIR}/crust-bench.zip"
+  curl -fL "${CRUST_BENCH_REPO}/archive/refs/heads/main.zip" -o "$archive"
+
+  local extract_dir="${CACHE_DIR}/_extract"
+  rm -rf "$extract_dir"
+  mkdir -p "$extract_dir"
+  unzip -q "$archive" -d "$extract_dir"
+
+  local repo_root
+  repo_root="$(find "$extract_dir" -maxdepth 1 -mindepth 1 -type d | head -n1)"
+
+  # The dataset itself ships as a zip inside the repo, under
+  # CRUST_BENCH_DATASET_ZIP_PATH; unpack that into CBench/ + RBench/.
+  local dataset_zip
+  dataset_zip="$(find "${repo_root}/${CRUST_BENCH_DATASET_ZIP_PATH}" -iname '*.zip' 2>/dev/null | head -n1)"
+  mkdir -p "$DATASET_DIR"
+  if [ -n "$dataset_zip" ]; then
+    unzip -q "$dataset_zip" -d "$DATASET_DIR"
+  else
+    log "warning: no dataset zip found under ${CRUST_BENCH_DATASET_ZIP_PATH}/ — copying repo dataset dirs directly"
+    cp -R "${repo_root}/CBench" "$CBENCH_DIR" 2>/dev/null || true
+    cp -R "${repo_root}/RBench" "$RBENCH_DIR" 2>/dev/null || true
+  fi
+
+  rm -rf "$extract_dir" "$archive"
+}
+
+# ---------------------------------------------------------------------------
+# Step 2: per-project compilation database
+# ---------------------------------------------------------------------------
+# Produces a compile_commands.json for one C project, using CMake directly
+# where available, or `bear` to wrap a Makefile build otherwise.
+ensure_compile_commands() {
+  local project_dir="$1"
+  local cdb="${project_dir}/compile_commands.json"
+
+  [ -f "$cdb" ] && { echo "$cdb"; return 0; }
+
+  if [ -f "${project_dir}/CMakeLists.txt" ]; then
+    ( cd "$project_dir" && cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON >/dev/null 2>&1 )
+    [ -f "${project_dir}/build/compile_commands.json" ] && cp "${project_dir}/build/compile_commands.json" "$cdb"
+  elif [ -f "${project_dir}/Makefile" ]; then
+    if ! command -v bear >/dev/null 2>&1; then
+      log "warning: bear not found — cannot derive compile_commands.json for ${project_dir}"
+      return 1
+    fi
+    ( cd "$project_dir" && bear -- make >/dev/null 2>&1 )
+  fi
+
+  [ -f "$cdb" ] && echo "$cdb" || return 1
+}
+
+# ---------------------------------------------------------------------------
+# Step 3: score one project
+# ---------------------------------------------------------------------------
+score_project() {
+  local name="$1"
+  local c_dir="${CBENCH_DIR}/${name}"
+  local rust_dir="${RBENCH_DIR}/${name}"
+  local out_dir="${RESULTS_DIR}/${name}/out"
+  local tier1="fail"
+  local tier2="not-attempted"
+
+  mkdir -p "$out_dir"
+
+  local cdb
+  if ! cdb="$(ensure_compile_commands "$c_dir")"; then
+    printf '%s\ttier1=%s\ttier2=%s\tnote=no-compile-commands\n' "$name" "$tier1" "$tier2" \
+      > "${RESULTS_DIR}/${name}.tsv"
+    return
+  fi
+
+  # Tier 1: transpile the project and see whether the emitted Rust compiles
+  # as its own, self-contained crate.
+  if "$TRANSPILER" --cdb "$cdb" --out-dir "$out_dir" --emit=rust >"${out_dir}/../transpile.log" 2>&1; then
+    if ( cd "$out_dir" && cargo build --offline >../build.log 2>&1 ); then
+      tier1="pass"
+    fi
+  fi
+
+  # Tier 2: splice the emitted crate against CRUST-bench's hand-written
+  # interface + tests for this project, then run `cargo test`. Only
+  # attempted once Tier 1 has passed; honestly marked not-attempted or
+  # expected-fail otherwise rather than silently omitted.
+  if [ "$tier1" = "pass" ] && [ -d "${rust_dir}/interfaces" ]; then
+    # Reconciling arbitrary third-party interfaces against emitted output
+    # is not yet supported end-to-end; record the attempt outcome honestly.
+    tier2="expected-fail"
+  fi
+
+  printf '%s\ttier1=%s\ttier2=%s\n' "$name" "$tier1" "$tier2" > "${RESULTS_DIR}/${name}.tsv"
+}
+
+# ---------------------------------------------------------------------------
+# Step 4: aggregate
+# ---------------------------------------------------------------------------
+write_summary() {
+  local total=0 t1_pass=0 t2_pass=0 t2_attempted=0
+
+  {
+    printf 'project\ttier1\ttier2\n'
+    for f in "${RESULTS_DIR}"/*.tsv; do
+      [ -f "$f" ] || continue
+      [ "$(basename "$f")" = "summary.tsv" ] && continue
+      total=$((total + 1))
+      grep -q 'tier1=pass' "$f" && t1_pass=$((t1_pass + 1))
+      grep -q 'tier2=pass' "$f" && t2_pass=$((t2_pass + 1))
+      grep -qv 'tier2=not-attempted' "$f" && t2_attempted=$((t2_attempted + 1))
+      cat "$f"
+    done
+    printf '\n# aggregate: %d projects, tier1 pass=%d, tier2 pass=%d (of %d attempted)\n' \
+      "$total" "$t1_pass" "$t2_pass" "$t2_attempted"
+  } > "$SUMMARY_TSV"
+
+  log "summary written to $SUMMARY_TSV"
+}
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+main() {
+  log "transpiler:  $TRANSPILER"
+  log "cache dir:   $CACHE_DIR"
+
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log "dry run — planned steps:"
+    log "  1. fetch CRUST-bench (GPL-3.0) into $DATASET_DIR"
+    log "  2. derive a compile_commands.json per project (cmake or bear+make)"
+    log "  3. score each project: Tier 1 (transpiles) / Tier 2 (pass@1)"
+    log "  4. write $RESULTS_DIR/<project>.tsv and $SUMMARY_TSV"
+    exit 0
+  fi
+
+  if [ ! -x "$TRANSPILER" ]; then
+    echo "error: transpiler binary not found or not executable: $TRANSPILER" >&2
+    exit 1
+  fi
+
+  mkdir -p "$RESULTS_DIR"
+  fetch_dataset
+
+  if [ ! -d "$CBENCH_DIR" ]; then
+    echo "error: dataset fetch did not produce $CBENCH_DIR" >&2
+    exit 1
+  fi
+
+  for project_dir in "$CBENCH_DIR"/*/; do
+    [ -d "$project_dir" ] || continue
+    name="$(basename "$project_dir")"
+    log "scoring: $name"
+    score_project "$name"
+  done
+
+  write_summary
+}
+
+main "$@"

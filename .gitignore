@@ -1,0 +1,14 @@
+# External benchmark cache (CRUST-bench dataset + results). Never committed —
+# the dataset is GPL-3.0 licensed and fetched at run time, not vendored.
+/.crust-bench-cache/
+crust-bench-cache/
+
+# Rust build artifacts (from any crates built during benchmark scoring)
+target/
+Cargo.lock
+
+# Logs
+*.log
+
+# OS cruft
+.DS_Store
