@@ -130,6 +130,65 @@ run_bounded() {
 }
 
 # ---------------------------------------------------------------------------
+# Host toolchain resolution (portable; empty/no-op where not applicable)
+# ---------------------------------------------------------------------------
+# On macOS the recorded compile commands invoke Apple's `cc`, which implicitly
+# supplies the SDK sysroot and the compiler's builtin-header directory. A
+# stand-alone parser is handed the recorded flags but neither of those, so
+# system headers such as <stdint.h> and <stdbool.h> cannot be found. Resolve
+# both from the installed Xcode command-line tools and splice them into each
+# project's compile database before scoring (see harden_compile_commands).
+# Off macOS, or without `xcrun`, these stay empty and nothing is added.
+HOST_SYSROOT=""
+HOST_BUILTIN_INCLUDE=""
+if [ "$(uname -s)" = "Darwin" ] && command -v xcrun >/dev/null 2>&1; then
+  HOST_SYSROOT="$(xcrun --show-sdk-path 2>/dev/null || true)"
+  _host_cc="$(xcrun -f clang 2>/dev/null || true)"
+  if [ -n "$_host_cc" ]; then
+    HOST_BUILTIN_INCLUDE="$("$_host_cc" -print-resource-dir 2>/dev/null)/include"
+  fi
+fi
+
+# The Tier-1 compile check must run a real, loadable rustc. A global cargo
+# config may point build.rustc at a wrapper that is unrelated to this
+# benchmark and may not even be loadable here; forcing RUSTC back to the
+# toolchain's own rustc keeps the compile check honest. (Overriding RUSTC has
+# no effect when no such wrapper is configured — it is the same compiler.)
+REAL_RUSTC="$(rustup which rustc 2>/dev/null || command -v rustc 2>/dev/null || echo rustc)"
+
+# harden_compile_commands <compile_commands.json>
+# Splice the host sysroot + builtin-header include into every entry so the
+# parser resolves system headers. Idempotent (skips entries already carrying
+# an -isysroot). No-op when the host sysroot is unknown or python3 is absent.
+harden_compile_commands() {
+  local cdb="$1"
+  [ -n "$HOST_SYSROOT" ] || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  python3 - "$cdb" "$HOST_SYSROOT" "$HOST_BUILTIN_INCLUDE" <<'PY'
+import json, sys
+cdb, sysroot, builtin = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    with open(cdb) as f:
+        data = json.load(f)
+except Exception:
+    sys.exit(0)
+extra = ["-isysroot", sysroot]
+if builtin:
+    extra += ["-isystem", builtin]
+for e in data:
+    cmd = e.get("command")
+    args = e.get("arguments")
+    if isinstance(cmd, str) and "-isysroot" not in cmd:
+        head, _, tail = cmd.partition(" ")
+        e["command"] = head + " " + " ".join(extra) + ((" " + tail) if tail else "")
+    elif isinstance(args, list) and "-isysroot" not in args:
+        e["arguments"] = [args[0]] + extra + args[1:] if args else args
+with open(cdb, "w") as f:
+    json.dump(data, f, indent=2)
+PY
+}
+
+# ---------------------------------------------------------------------------
 # Step 1: fetch the dataset into the external cache (never into this repo)
 # ---------------------------------------------------------------------------
 fetch_dataset() {
@@ -219,12 +278,37 @@ score_project() {
     return
   fi
 
-  # Tier 1: transpile the project and see whether the emitted Rust compiles
-  # as its own, self-contained crate.
+  # Give the parser the host sysroot + builtin headers it needs to resolve
+  # standard system headers (no-op off macOS / without python3).
+  harden_compile_commands "$cdb"
+
+  # Tier 1: transpile the project, then check whether the emitted Rust
+  # compiles. The emitter writes one self-contained crate per translation
+  # unit, so there is no single top-level crate to build — instead, build
+  # every emitted crate and require them all to compile. A `note` records
+  # which step a non-passing project stopped at, so the summary can separate
+  # projects the product actually ran on from those still gated earlier.
+  local note=""
   if run_bounded "$TRANSPILE_TIMEOUT" "$TRANSPILER" --cdb "$cdb" --out-dir "$out_dir" --emit=rust >"${out_dir}/../transpile.log" 2>&1; then
-    if ( cd "$out_dir" && run_bounded "$BUILD_TIMEOUT" cargo build --offline >../build.log 2>&1 ); then
+    local n_total=0 n_ok=0 manifest cdir
+    while IFS= read -r manifest; do
+      n_total=$((n_total + 1))
+      cdir="$(dirname "$manifest")"
+      if ( cd "$cdir" && RUSTC="$REAL_RUSTC" run_bounded "$BUILD_TIMEOUT" \
+             cargo build --offline >>"${out_dir}/../build.log" 2>&1 ); then
+        n_ok=$((n_ok + 1))
+      fi
+    done < <(find "$out_dir" -name Cargo.toml)
+
+    if [ "$n_total" -eq 0 ]; then
+      note="transpiled-no-crate"
+    elif [ "$n_ok" -eq "$n_total" ]; then
       tier1="pass"
+    else
+      note="crate-build-failed(${n_ok}/${n_total})"
     fi
+  else
+    note="transpile-failed"
   fi
 
   # Tier 2: splice the emitted crate against CRUST-bench's hand-written
@@ -237,7 +321,13 @@ score_project() {
     tier2="expected-fail"
   fi
 
-  printf '%s\ttier1=%s\ttier2=%s\n' "$name" "$tier1" "$tier2" > "${RESULTS_DIR}/${name}.tsv"
+  if [ -n "$note" ]; then
+    printf '%s\ttier1=%s\ttier2=%s\tnote=%s\n' "$name" "$tier1" "$tier2" "$note" \
+      > "${RESULTS_DIR}/${name}.tsv"
+  else
+    printf '%s\ttier1=%s\ttier2=%s\n' "$name" "$tier1" "$tier2" \
+      > "${RESULTS_DIR}/${name}.tsv"
+  fi
 }
 
 # ---------------------------------------------------------------------------
