@@ -8,35 +8,38 @@ Harness: [`benchmarks/run_crust_bench.sh`](benchmarks/run_crust_bench.sh).
   ([paper: arXiv 2504.15254](https://arxiv.org/abs/2504.15254)) — 100 real-world
   C repositories, each paired with a hand-written safe-Rust interface and a
   test suite.
-- **Coverage:** all 100 projects scored; 81 of 100 could actually be attempted
-  in this run environment (see the breakdown below — the other 19 have
-  project-side build defects that prevented deriving a compilation database,
-  so the converter never ran on them; they are disclosed, not counted as
-  conversion failures).
+- **Coverage:** all 100 projects scored. 19 of the 100 could not be attempted
+  at all — their own build systems are broken (defective Makefiles / CMake
+  files), so the file-and-flag list the converter needs as input could not be
+  produced and the converter never ran on them. That leaves **81 projects the
+  converter actually ran on**; every number below is about those 81.
 
 ## Aggregate
 
 | Metric | Result |
 |---|---|
 | Projects in dataset | 100 |
-| Projects the converter could attempt | 81 / 100 |
-| **Tier 1 — whole project converts AND every emitted crate compiles** | **18 / 100** (18 of 81 attempted) |
-| Emitted crates that compile (across all attempted projects) | 117 / 233 (50%) |
-| Tier 2 — CRUST-bench pass@1 (against the hand-written interface) | 0 / 100 (not attempted) |
+| Unreachable (their own builds are broken; converter never ran) | 19 |
+| **Projects the converter ran on** | **81** |
+| **Tier-1 pass — every file converted AND all emitted Rust compiles** | **18** (of the 81 run; 18/100 of the dataset) |
+| Rust crates emitted across the 81 (≈ one per C source file) | 233 |
+| Emitted crates that compile | **117 / 233 (50%)** |
+| Tier 2 — CRUST-bench pass@1 (against the hand-written interface) | 0 (not attempted) |
 
 **Tier-1 passing projects (18):** amp, bostree, btree-map, chtrie, csyncmers,
 fft, fs_c, hamta, hydra, kd3, leftpad, lib2bit, libbeaufort, libfor,
 murmurhash_c, quadtree, Simple-Sparsehash, vec.
 
-## Per-project breakdown (all 100 accounted for)
+## What happened on the 81 projects the converter ran on
 
-| Class | Projects | Meaning |
-|---|---|---|
-| Tier-1 pass | 18 | Whole project converted; every emitted crate compiles as a Rust library. |
-| Converted, some crates don't compile yet | 29 | Whole project converted (94 crates emitted, 38 compile); the rest fail Rust compilation. |
-| Partially converted | 18 | Some source files hit unsupported constructs and are declined loudly (never silently mis-translated); 103 crates emitted, 43 compile. |
-| Not converted | 16 | Unsupported constructs in every file; the converter declines loudly rather than emit wrong code. |
-| Environment-blocked | 19 | The project's own build is defective in this environment, so no compilation database could be derived and the converter never ran. |
+| Count | Outcome |
+|---|---|
+| **18** | **Full success** — every C file converted, and all of the resulting Rust compiles. |
+| 29 | Every C file converted, but only some of the resulting Rust compiles (38 of their 94 crates do). |
+| 18 | Some files converted, others refused — the converter refuses loudly on C constructs it does not support yet, rather than emit wrong code (43 of their 103 crates compile). |
+| 16 | Every file refused — nothing produced (again: a loud, honest refusal, never a silent mis-translation). |
+
+(18 + 29 + 18 + 16 = 81.)
 
 Per-project rows: `results/<project>.tsv` in the run's cache directory
 (regenerate with the harness — result files are not committed to this repo).
