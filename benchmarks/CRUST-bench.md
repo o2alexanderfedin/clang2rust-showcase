@@ -68,8 +68,8 @@ the gap is visible rather than hidden behind a single blended number.
 
 ## Operational blockers
 
-- **`bear` is required for Makefile-only projects.** clang2rust's front end
-  needs a `compile_commands.json` compilation database. CMake projects
+- **`bear` is required for Makefile-only projects.** clang2rust takes a
+  `compile_commands.json` compilation database as input. CMake projects
   produce one directly; Makefile-only projects need
   [`bear`](https://github.com/rizsotto/Bear) to wrap the build and record
   one. Install it (`brew install bear` / `apt install bear`) before running
