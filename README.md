@@ -14,6 +14,7 @@ that compiles and behaves identically to the original.
 | Compiles | 281 / 281 SQLite corpus translation units produce Rust that compiles (rustc obj-OK) |
 | Behavioral parity | The complete SQLite command-line shell, transpiled to Rust, is byte-identical to the native build across 10 SQL test scripts, reproduced 3× under an allocator-hardened harness |
 | Safety | 67.4% of generated Rust functions are fully safe (no `unsafe`); memory-unsafe constructs reduced 45.9% vs. a faithful raw-pointer baseline (further ownership work in progress) |
+| CRUST-bench (100 third-party C repos) | Tier-1: 18 / 100 projects fully convert to compiling Rust (18 of 81 attemptable); 117 / 233 emitted crates compile — see [RESULTS.md](RESULTS.md) |
 | Release | 0.22.0 |
 
 *Measured on the [SQLite](https://www.sqlite.org/) separate-file source tree
@@ -76,7 +77,7 @@ third-party, hand-written interfaces. We expect Tier-2 pass@1 to be low as a
 result — we're publishing it anyway, as an honest baseline rather than a
 number to hide.
 
-Results: [`RESULTS.md`](RESULTS.md) (pending first run).
+Results: [`RESULTS.md`](RESULTS.md) — first run recorded 2026-07-20 (Tier-1 18/100; full honest per-class breakdown).
 
 ### Reproduce
 
