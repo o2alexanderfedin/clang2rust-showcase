@@ -149,11 +149,11 @@ if [ "$(uname -s)" = "Darwin" ] && command -v xcrun >/dev/null 2>&1; then
   fi
 fi
 
-# The Tier-1 compile check must run a real, loadable rustc. A global cargo
-# config may point build.rustc at a wrapper that is unrelated to this
-# benchmark and may not even be loadable here; forcing RUSTC back to the
-# toolchain's own rustc keeps the compile check honest. (Overriding RUSTC has
-# no effect when no such wrapper is configured — it is the same compiler.)
+# The Tier-1 compile check invokes rustc DIRECTLY (never through cargo): a
+# host's global cargo configuration may interpose wrappers that are unrelated
+# to this benchmark (and may not even be runnable here), which would fail
+# every build for environment reasons. Resolving the toolchain's own rustc and
+# compiling each emitted crate with it keeps the check honest and portable.
 REAL_RUSTC="$(rustup which rustc 2>/dev/null || command -v rustc 2>/dev/null || echo rustc)"
 
 # harden_compile_commands <compile_commands.json>
@@ -255,6 +255,15 @@ ensure_compile_commands() {
     ( cd "$project_dir" && run_bounded "$CDB_TIMEOUT" bear -- make >/dev/null 2>&1 )
   fi
 
+  # A recorder run whose build failed immediately leaves an EMPTY (0-entry)
+  # database behind. Passing that on would mislabel the project as "attempted"
+  # with nothing to attempt — treat it as no-database, honestly.
+  if [ -f "$cdb" ] && command -v python3 >/dev/null 2>&1; then
+    if ! python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])) else 1)' "$cdb" 2>/dev/null; then
+      rm -f "$cdb"
+    fi
+  fi
+
   [ -f "$cdb" ] && echo "$cdb" || return 1
 }
 
@@ -289,26 +298,40 @@ score_project() {
   # which step a non-passing project stopped at, so the summary can separate
   # projects the product actually ran on from those still gated earlier.
   local note=""
-  if run_bounded "$TRANSPILE_TIMEOUT" "$TRANSPILER" --cdb "$cdb" --out-dir "$out_dir" --emit=rust >"${out_dir}/../transpile.log" 2>&1; then
-    local n_total=0 n_ok=0 manifest cdir
-    while IFS= read -r manifest; do
-      n_total=$((n_total + 1))
-      cdir="$(dirname "$manifest")"
-      if ( cd "$cdir" && RUSTC="$REAL_RUSTC" run_bounded "$BUILD_TIMEOUT" \
-             cargo build --offline >>"${out_dir}/../build.log" 2>&1 ); then
-        n_ok=$((n_ok + 1))
-      fi
-    done < <(find "$out_dir" -name Cargo.toml)
-
-    if [ "$n_total" -eq 0 ]; then
-      note="transpiled-no-crate"
-    elif [ "$n_ok" -eq "$n_total" ]; then
-      tier1="pass"
-    else
-      note="crate-build-failed(${n_ok}/${n_total})"
+  # The converter isolates errors per source file: its exit code is non-zero
+  # when ANY file in the project could not be converted, even though every
+  # other file's crate was still emitted. So the exit code alone cannot
+  # classify the project — count the emitted crates, build them all, and
+  # classify from both. A partial conversion is never a Tier-1 pass, but it is
+  # recorded as partial (with how much emitted and how much of that compiled),
+  # never conflated with "nothing was produced".
+  run_bounded "$TRANSPILE_TIMEOUT" "$TRANSPILER" --cdb "$cdb" --out-dir "$out_dir" --emit=rust >"${out_dir}/../transpile.log" 2>&1
+  local trc=$?
+  local n_total=0 n_ok=0 manifest cdir
+  while IFS= read -r manifest; do
+    n_total=$((n_total + 1))
+    cdir="$(dirname "$manifest")"
+    # Compile the crate root as a Rust LIBRARY OBJECT — the same check the
+    # product's own verification uses everywhere. The emitted crates are
+    # C-ABI translation units (some export a C `main`, most export none), so
+    # a binary-target build would demand a Rust `main` that is not supposed
+    # to exist; the library-object compile is the correct, honest question:
+    # "is this valid Rust?". Sibling modules resolve from the same src/ dir.
+    if run_bounded "$BUILD_TIMEOUT" "$REAL_RUSTC" --edition=2021 \
+         --crate-type=lib --emit=obj "$cdir/src/lib.rs" \
+         -o "$cdir/.tier1_check.o" >>"${out_dir}/../build.log" 2>&1; then
+      n_ok=$((n_ok + 1))
     fi
-  else
+  done < <(find "$out_dir" -name Cargo.toml)
+
+  if [ "$n_total" -eq 0 ]; then
     note="transpile-failed"
+  elif [ "$trc" -ne 0 ]; then
+    note="transpile-partial(crates=${n_total},compiled=${n_ok})"
+  elif [ "$n_ok" -eq "$n_total" ]; then
+    tier1="pass"
+  else
+    note="crate-build-failed(${n_ok}/${n_total})"
   fi
 
   # Tier 2: splice the emitted crate against CRUST-bench's hand-written
