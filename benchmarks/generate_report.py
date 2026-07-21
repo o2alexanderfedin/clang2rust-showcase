@@ -35,13 +35,16 @@ Column meanings (shared by both tables):
                 attempted` today, honestly). SQLite: end-to-end differential
                 testing — transpiled CLI vs native CLI over the same SQL
                 scripts, outputs compared byte-for-byte.
-  Fns         — function DEFINITIONS in the emitted Rust (declarations of
+  Functions   — function DEFINITIONS in the emitted Rust (declarations of
                 foreign functions in `extern` blocks are not counted).
-  Fully safe  — definitions that are not `unsafe fn` and whose body contains
-                no `unsafe` block.
-  Unsafe sites— `unsafe` blocks plus `unsafe fn` definitions in the output
+  Fully safe functions — definitions that are not `unsafe fn` and whose body
+                contains no `unsafe` block; shown as count + share of all
+                functions.
+  `unsafe` sites — `unsafe` blocks plus `unsafe fn` definitions in the output
                 (linkage declarations and attribute spellings such as
                 `#[unsafe(no_mangle)]` are not operations and not counted).
+  All counts are rendered with thousands separators; every table carries a
+  one-line legend so the columns are self-explanatory in RESULTS.md itself.
 """
 import os
 import re
@@ -61,9 +64,29 @@ SQLITE_BEGIN = "<!-- sqlite-table:begin -->"
 SQLITE_END = "<!-- sqlite-table:end -->"
 
 HEADER = [
-    "| Project | Transpiled | Compiled | Tested | Fns | Fully safe | Unsafe sites |",
+    "| Project | Transpiled | Compiled | Tested | Functions "
+    "| Fully safe functions | `unsafe` sites |",
     "|---|---|---|---|---|---|---|",
 ]
+
+# One-line legend rendered under BOTH tables (generator-owned, inside the
+# splice markers) so every number is defined right where it is read.
+LEGEND = (
+    "<sub>**Functions** — function definitions in the generated Rust "
+    "(declarations of external C functions are not counted). "
+    "**Fully safe functions** — functions with no `unsafe` anywhere: not "
+    "declared `unsafe fn` and containing no `unsafe` block; the percentage "
+    "is their share of all functions. "
+    "**`unsafe` sites** — individual `unsafe` blocks or `unsafe fn` "
+    "definitions remaining in the output; each marks one place whose safety "
+    "is inherited from the original C rather than proven by the Rust "
+    "compiler (fewer is better).</sub>"
+)
+
+
+def fmt_n(n):
+    """Human-readable count: thousands separators (17,005 — not 17005)."""
+    return f"{n:,}"
 
 
 def upstream_url(cbench_dir, project):
@@ -139,7 +162,7 @@ def safety_cells(out_dir):
     if not total:
         return "—", "—", "—"
     pct = round(100.0 * safe / total)
-    return str(total), f"{safe} ({pct}%)", str(sites)
+    return fmt_n(total), f"{fmt_n(safe)} ({pct}%)", fmt_n(sites)
 
 
 def parse_kv(path):
@@ -165,10 +188,10 @@ def states(row):
         return ("✅ yes", "✅ all", tested)
     m = re.search(r"crate-build-failed\((\d+)/(\d+)\)", note)
     if m:
-        return ("✅ yes", f"⚠️ {m.group(1)}/{m.group(2)}", tested)
+        return ("✅ yes", f"⚠️ {m.group(1)} of {m.group(2)} crates", tested)
     m = re.search(r"transpile-partial\(crates=(\d+),compiled=(\d+)\)", note)
     if m:
-        return ("⚠️ partial", f"⚠️ {m.group(2)}/{m.group(1)}", tested)
+        return ("⚠️ partial", f"⚠️ {m.group(2)} of {m.group(1)} crates", tested)
     if "transpile-failed" in note:
         return ("❌ no (refused, loudly)", "—", "—")
     return ("?", "?", tested)
@@ -186,6 +209,8 @@ def render_crust(results_dir, cbench_dir):
         fns, safe_cell, sites_cell = safety_cells(
             os.path.join(results_dir, project, "out"))
         lines.append(f"| {cell} | {t} | {c} | {x} | {fns} | {safe_cell} | {sites_cell} |")
+    lines.append("")
+    lines.append(LEGEND)
     return "\n".join(lines)
 
 
@@ -197,23 +222,31 @@ def ratio_cells(row):
 
     files = split("files")
     if files:
-        mark = "✅ yes" if files[0] == files[1] else "⚠️ partial"
-        transpiled = f"{mark} — {files[0]}/{files[1]} files"
+        if files[0] == files[1]:
+            transpiled = f"✅ yes — all {fmt_n(files[1])} C source files"
+        else:
+            transpiled = (f"⚠️ partial — {fmt_n(files[0])} of "
+                          f"{fmt_n(files[1])} C source files")
     else:
         transpiled = "?"
 
     crates = split("crates")
     if crates:
-        compiled = (f"✅ all ({crates[0]}/{crates[1]})" if crates[0] == crates[1]
-                    else f"⚠️ {crates[0]}/{crates[1]}")
+        compiled = (f"✅ all {fmt_n(crates[1])} crates"
+                    if crates[0] == crates[1]
+                    else f"⚠️ {fmt_n(crates[0])} of {fmt_n(crates[1])} crates")
     else:
         compiled = "?"
 
     scripts = split("scripts")
     if scripts:
-        mark = "✅" if scripts[0] == scripts[1] else "⚠️"
-        runs = f", ×{row['runs']} runs" if row.get("runs") else ""
-        tested = f"{mark} {scripts[0]}/{scripts[1]} scripts byte-identical{runs}"
+        mark = "✅ all" if scripts[0] == scripts[1] else "⚠️"
+        count = (f"{scripts[0]}" if scripts[0] == scripts[1]
+                 else f"{scripts[0]} of {scripts[1]}")
+        runs = (f" ({row['runs']} independent runs)"
+                if row.get("runs") else "")
+        tested = (f"{mark} {count} SQL test scripts byte-identical "
+                  f"vs the native CLI{runs}")
     else:
         tested = "?"
     return transpiled, compiled, tested
@@ -239,6 +272,8 @@ def render_sqlite(status_path, src_dir):
     fns, safe_cell, sites_cell = safety_cells(src_dir)
     lines = list(HEADER)
     lines.append(f"| {cell} | {t} | {c} | {x} | {fns} | {safe_cell} | {sites_cell} |")
+    lines.append("")
+    lines.append(LEGEND)
     rev = git_short_rev(src_dir)
     at = f" @ `{rev}`" if rev else ""
     lines.append("")
