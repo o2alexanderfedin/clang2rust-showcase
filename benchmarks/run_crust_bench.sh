@@ -375,6 +375,14 @@ write_summary() {
   } > "$SUMMARY_TSV"
 
   log "summary written to $SUMMARY_TSV"
+
+  # Per-project markdown report (the table published in RESULTS.md). Best-
+  # effort: python3 is already required elsewhere for database hardening.
+  if command -v python3 >/dev/null 2>&1; then
+    python3 "${SCRIPT_DIR}/generate_report.py" "$RESULTS_DIR" "$CBENCH_DIR" \
+      > "${RESULTS_DIR}/REPORT.md" 2>/dev/null \
+      && log "per-project report written to ${RESULTS_DIR}/REPORT.md"
+  fi
 }
 
 # ---------------------------------------------------------------------------
