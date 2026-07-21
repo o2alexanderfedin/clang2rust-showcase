@@ -31,6 +31,8 @@ import os
 import re
 import sys
 
+FN_DEF = re.compile(r"^\s*(?:pub(?:\(crate\))?\s+)?(?:unsafe\s+)?(?:extern \"C\"\s+)?fn\s+\w+", re.M)
+
 BEGIN = "<!-- crust-table:begin -->"
 END = "<!-- crust-table:end -->"
 
@@ -46,6 +48,43 @@ def upstream_url(cbench_dir, project):
             return m.group(1) if m else None
     except OSError:
         return None
+
+
+def safety_counts(out_dir):
+    """(total_fns, safe_fns, unsafe_sites) across every emitted .rs under
+    out_dir — computed from the OUTPUT alone. A function is 'safe' when its
+    body contains no `unsafe`; an 'unsafe site' is one `unsafe` occurrence
+    (a block or an unsafe fn) — i.e. an operation whose safety could not be
+    proven and is preserved, explicitly marked, instead of hidden."""
+    total = safe = sites = 0
+    for root, _dirs, files in os.walk(out_dir):
+        for fname in files:
+            if not fname.endswith(".rs"):
+                continue
+            try:
+                text = open(os.path.join(root, fname), encoding="utf-8").read()
+            except OSError:
+                continue
+            sites += text.count("unsafe")
+            for m in FN_DEF.finditer(text):
+                total += 1
+                # body = balanced-brace span from the first { after the match
+                i = text.find("{", m.end())
+                if i < 0:
+                    continue
+                depth, j = 0, i
+                while j < len(text):
+                    if text[j] == "{":
+                        depth += 1
+                    elif text[j] == "}":
+                        depth -= 1
+                        if depth == 0:
+                            break
+                    j += 1
+                body = text[m.start():j + 1]
+                if "unsafe" not in body:
+                    safe += 1
+    return total, safe, sites
 
 
 def parse_row(path):
@@ -79,7 +118,10 @@ def states(row):
 
 
 def render(results_dir, cbench_dir):
-    lines = ["| Project | Transpiled | Compiled | Tested |", "|---|---|---|---|"]
+    lines = [
+        "| Project | Transpiled | Compiled | Tested | Fns | Fully safe | Unsafe sites |",
+        "|---|---|---|---|---|---|---|",
+    ]
     for name in sorted(os.listdir(results_dir), key=str.lower):
         if not name.endswith(".tsv") or name == "summary.tsv":
             continue
@@ -87,7 +129,17 @@ def render(results_dir, cbench_dir):
         t, c, x = states(parse_row(os.path.join(results_dir, name)))
         url = upstream_url(cbench_dir, project)
         cell = f"[{project}]({url})" if url else project
-        lines.append(f"| {cell} | {t} | {c} | {x} |")
+        out_dir = os.path.join(results_dir, project, "out")
+        if os.path.isdir(out_dir):
+            total, safe, sites = safety_counts(out_dir)
+        else:
+            total = safe = sites = 0
+        if total:
+            pct = round(100.0 * safe / total)
+            fns, safe_cell, sites_cell = str(total), f"{safe} ({pct}%)", str(sites)
+        else:
+            fns = safe_cell = sites_cell = "—"
+        lines.append(f"| {cell} | {t} | {c} | {x} | {fns} | {safe_cell} | {sites_cell} |")
     return "\n".join(lines)
 
 
