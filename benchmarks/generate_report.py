@@ -1,40 +1,69 @@
 #!/usr/bin/env python3
-"""generate_report.py — turn a CRUST-bench run's per-project TSVs into the
-per-project markdown table published in RESULTS.md.
+"""generate_report.py — render the per-project markdown tables published in
+RESULTS.md from result files. This script owns every table; none is
+hand-edited.
 
 Usage:
-    benchmarks/generate_report.py <results-dir> [<cbench-dir>] [--update <RESULTS.md>]
+    benchmarks/generate_report.py <results-dir> [<cbench-dir>]
+        [--sqlite-status <tsv> --sqlite-src <dir>] [--update <RESULTS.md>]
 
+CRUST-bench table — reads every `<results-dir>/<project>.tsv` row written by
+run_crust_bench.sh (`summary.tsv` is skipped) and renders one row per project.
 With <cbench-dir> (the dataset's CBench folder), each project name links to
 its upstream repository — resolved PROGRAMMATICALLY from the project's own
 `.git/config` origin URL (every dataset project carries one); a project
 without one is rendered unlinked, never guessed.
 
-With --update, the table is spliced into the given markdown file between the
-`<!-- crust-table:begin -->` / `<!-- crust-table:end -->` markers (the file's
-table is never hand-edited — this script owns it).
+SQLite flagship table — `--sqlite-status` names a small tab-separated
+key=value file recording the verified run facts (files converted, crates
+compiled, differential scripts passed); `--sqlite-src` points at a checkout
+of the published Rust output, over which the safety columns are computed by
+the same counting code as the CRUST-bench table.
 
-Reads every `<results-dir>/<project>.tsv` row written by run_crust_bench.sh
-(`summary.tsv` is skipped) and renders one table row per project with three
-states:
+With --update, each rendered table is spliced into the given markdown file
+between its `<!-- crust-table:begin/end -->` / `<!-- sqlite-table:begin/end -->`
+markers.
+
+Column meanings (shared by both tables):
 
   Transpiled  — did the converter turn the project's C into Rust?
                 yes / partial (some files refused, loudly) / no / n/a (the
                 project's own build is broken, so the converter never ran)
   Compiled    — how many of the emitted Rust crates compile (rustc, library
                 object) — `12/12` style, so partial progress is visible.
-  Tested      — the benchmark's own pass@1 metric (emitted Rust against the
-                hand-written interface + its test suite). `not attempted`
-                today, honestly, rather than a blended failure.
+  Tested      — CRUST-bench: the benchmark's own pass@1 metric (`not
+                attempted` today, honestly). SQLite: end-to-end differential
+                testing — transpiled CLI vs native CLI over the same SQL
+                scripts, outputs compared byte-for-byte.
+  Fns         — function DEFINITIONS in the emitted Rust (declarations of
+                foreign functions in `extern` blocks are not counted).
+  Fully safe  — definitions that are not `unsafe fn` and whose body contains
+                no `unsafe` block.
+  Unsafe sites— `unsafe` blocks plus `unsafe fn` definitions in the output
+                (linkage declarations and attribute spellings such as
+                `#[unsafe(no_mangle)]` are not operations and not counted).
 """
 import os
 import re
+import subprocess
 import sys
 
-FN_DEF = re.compile(r"^\s*(?:pub(?:\(crate\))?\s+)?(?:unsafe\s+)?(?:extern \"C\"\s+)?fn\s+\w+", re.M)
+FN_DEF = re.compile(
+    r"^\s*(?:pub(?:\(crate\))?\s+)?(?:const\s+)?(unsafe\s+)?"
+    r"(?:extern \"C\"\s+)?fn\s+\w+",
+    re.M,
+)
+UNSAFE_BLOCK = re.compile(r"\bunsafe\s*\{")
 
-BEGIN = "<!-- crust-table:begin -->"
-END = "<!-- crust-table:end -->"
+CRUST_BEGIN = "<!-- crust-table:begin -->"
+CRUST_END = "<!-- crust-table:end -->"
+SQLITE_BEGIN = "<!-- sqlite-table:begin -->"
+SQLITE_END = "<!-- sqlite-table:end -->"
+
+HEADER = [
+    "| Project | Transpiled | Compiled | Tested | Fns | Fully safe | Unsafe sites |",
+    "|---|---|---|---|---|---|---|",
+]
 
 
 def upstream_url(cbench_dir, project):
@@ -50,14 +79,38 @@ def upstream_url(cbench_dir, project):
         return None
 
 
+def body_span(text, sig_end):
+    """(open_brace, close_brace) of the definition body starting after the
+    signature, or None when the signature ends in `;` first — i.e. a
+    declaration (an `extern` block import), not a definition."""
+    brace = text.find("{", sig_end)
+    semi = text.find(";", sig_end)
+    if brace < 0 or (0 <= semi < brace):
+        return None
+    depth, j = 0, brace
+    while j < len(text):
+        if text[j] == "{":
+            depth += 1
+        elif text[j] == "}":
+            depth -= 1
+            if depth == 0:
+                return brace, j
+        j += 1
+    return brace, len(text) - 1
+
+
 def safety_counts(out_dir):
     """(total_fns, safe_fns, unsafe_sites) across every emitted .rs under
-    out_dir — computed from the OUTPUT alone. A function is 'safe' when its
-    body contains no `unsafe`; an 'unsafe site' is one `unsafe` occurrence
-    (a block or an unsafe fn) — i.e. an operation whose safety could not be
-    proven and is preserved, explicitly marked, instead of hidden."""
+    out_dir — computed from the OUTPUT alone. Only function DEFINITIONS
+    count (declarations inside `extern` blocks do not); an 'unsafe site' is
+    an `unsafe` block or an `unsafe fn` definition — an operation whose
+    safety could not be proven and is preserved, explicitly marked, instead
+    of hidden. `unsafe extern` linkage and `#[unsafe(...)]` attributes are
+    spellings, not operations, and are not counted."""
     total = safe = sites = 0
     for root, _dirs, files in os.walk(out_dir):
+        if ".git" in root.split(os.sep):
+            continue
         for fname in files:
             if not fname.endswith(".rs"):
                 continue
@@ -65,46 +118,50 @@ def safety_counts(out_dir):
                 text = open(os.path.join(root, fname), encoding="utf-8").read()
             except OSError:
                 continue
-            sites += text.count("unsafe")
+            sites += len(UNSAFE_BLOCK.findall(text))
             for m in FN_DEF.finditer(text):
-                total += 1
-                # body = balanced-brace span from the first { after the match
-                i = text.find("{", m.end())
-                if i < 0:
+                span = body_span(text, m.end())
+                if span is None:
                     continue
-                depth, j = 0, i
-                while j < len(text):
-                    if text[j] == "{":
-                        depth += 1
-                    elif text[j] == "}":
-                        depth -= 1
-                        if depth == 0:
-                            break
-                    j += 1
-                body = text[m.start():j + 1]
-                if "unsafe" not in body:
+                total += 1
+                if m.group(1):  # `unsafe fn` definition
+                    sites += 1
+                    continue
+                if not UNSAFE_BLOCK.search(text[span[0]:span[1] + 1]):
                     safe += 1
     return total, safe, sites
 
 
-def parse_row(path):
-    row = {"tier1": "", "tier2": "", "note": ""}
+def safety_cells(out_dir):
+    if not os.path.isdir(out_dir):
+        return "—", "—", "—"
+    total, safe, sites = safety_counts(out_dir)
+    if not total:
+        return "—", "—", "—"
+    pct = round(100.0 * safe / total)
+    return str(total), f"{safe} ({pct}%)", str(sites)
+
+
+def parse_kv(path):
+    """One tab-separated line of key=value fields -> dict."""
+    row = {}
     with open(path, encoding="utf-8") as f:
         for part in f.read().strip().split("\t"):
-            for key in ("tier1", "tier2", "note"):
-                if part.startswith(key + "="):
-                    row[key] = part[len(key) + 1:]
+            if "=" in part:
+                key, value = part.split("=", 1)
+                row[key] = value
     return row
 
 
 def states(row):
-    """Map one TSV row to (transpiled, compiled, tested) cell texts."""
-    note = row["note"]
-    tested = "not attempted" if row["tier2"] in ("", "not-attempted") else row["tier2"]
+    """Map one CRUST TSV row to (transpiled, compiled, tested) cell texts."""
+    note = row.get("note", "")
+    tier2 = row.get("tier2", "")
+    tested = "not attempted" if tier2 in ("", "not-attempted") else tier2
 
     if "no-compile-commands" in note:
         return ("n/a — project's own build is broken", "—", "—")
-    if row["tier1"] == "pass":
+    if row.get("tier1") == "pass":
         return ("✅ yes", "✅ all", tested)
     m = re.search(r"crate-build-failed\((\d+)/(\d+)\)", note)
     if m:
@@ -117,58 +174,129 @@ def states(row):
     return ("?", "?", tested)
 
 
-def render(results_dir, cbench_dir):
-    lines = [
-        "| Project | Transpiled | Compiled | Tested | Fns | Fully safe | Unsafe sites |",
-        "|---|---|---|---|---|---|---|",
-    ]
+def render_crust(results_dir, cbench_dir):
+    lines = list(HEADER)
     for name in sorted(os.listdir(results_dir), key=str.lower):
         if not name.endswith(".tsv") or name == "summary.tsv":
             continue
         project = name[:-len(".tsv")]
-        t, c, x = states(parse_row(os.path.join(results_dir, name)))
+        t, c, x = states(parse_kv(os.path.join(results_dir, name)))
         url = upstream_url(cbench_dir, project)
         cell = f"[{project}]({url})" if url else project
-        out_dir = os.path.join(results_dir, project, "out")
-        if os.path.isdir(out_dir):
-            total, safe, sites = safety_counts(out_dir)
-        else:
-            total = safe = sites = 0
-        if total:
-            pct = round(100.0 * safe / total)
-            fns, safe_cell, sites_cell = str(total), f"{safe} ({pct}%)", str(sites)
-        else:
-            fns = safe_cell = sites_cell = "—"
+        fns, safe_cell, sites_cell = safety_cells(
+            os.path.join(results_dir, project, "out"))
         lines.append(f"| {cell} | {t} | {c} | {x} | {fns} | {safe_cell} | {sites_cell} |")
     return "\n".join(lines)
 
 
+def ratio_cells(row):
+    """Render the SQLite status facts, honestly reflecting any shortfall."""
+    def split(key):
+        m = re.fullmatch(r"(\d+)/(\d+)", row.get(key, ""))
+        return (int(m.group(1)), int(m.group(2))) if m else None
+
+    files = split("files")
+    if files:
+        mark = "✅ yes" if files[0] == files[1] else "⚠️ partial"
+        transpiled = f"{mark} — {files[0]}/{files[1]} files"
+    else:
+        transpiled = "?"
+
+    crates = split("crates")
+    if crates:
+        compiled = (f"✅ all ({crates[0]}/{crates[1]})" if crates[0] == crates[1]
+                    else f"⚠️ {crates[0]}/{crates[1]}")
+    else:
+        compiled = "?"
+
+    scripts = split("scripts")
+    if scripts:
+        mark = "✅" if scripts[0] == scripts[1] else "⚠️"
+        runs = f", ×{row['runs']} runs" if row.get("runs") else ""
+        tested = f"{mark} {scripts[0]}/{scripts[1]} scripts byte-identical{runs}"
+    else:
+        tested = "?"
+    return transpiled, compiled, tested
+
+
+def git_short_rev(path):
+    try:
+        out = subprocess.run(
+            ["git", "-C", path, "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=10)
+        return out.stdout.strip() if out.returncode == 0 else None
+    except OSError:
+        return None
+
+
+def render_sqlite(status_path, src_dir):
+    row = parse_kv(status_path)
+    name = row.get("name", "?")
+    cell = f"[{name}]({row['url']})" if row.get("url") else name
+    if row.get("output_url"):
+        cell += f" → [Rust output]({row['output_url']})"
+    t, c, x = ratio_cells(row)
+    fns, safe_cell, sites_cell = safety_cells(src_dir)
+    lines = list(HEADER)
+    lines.append(f"| {cell} | {t} | {c} | {x} | {fns} | {safe_cell} | {sites_cell} |")
+    rev = git_short_rev(src_dir)
+    at = f" @ `{rev}`" if rev else ""
+    lines.append("")
+    lines.append(f"Safety columns computed over the published Rust output{at}; "
+                 f"run facts recorded {row.get('run_date', '?')} in "
+                 f"[`benchmarks/sqlite-status.tsv`](benchmarks/sqlite-status.tsv).")
+    return "\n".join(lines)
+
+
+def splice(doc, begin, end, table):
+    if begin not in doc or end not in doc:
+        return None
+    head, rest = doc.split(begin, 1)
+    _, tail = rest.split(end, 1)
+    return head + begin + "\n" + table + "\n" + end + tail
+
+
+def take_flag(args, flag):
+    if flag not in args:
+        return None
+    i = args.index(flag)
+    value = args[i + 1]
+    del args[i:i + 2]
+    return value
+
+
 def main():
     args = sys.argv[1:]
-    update_target = None
-    if "--update" in args:
-        i = args.index("--update")
-        update_target = args[i + 1]
-        del args[i:i + 2]
-    if not args or not os.path.isdir(args[0]):
+    update_target = take_flag(args, "--update")
+    sqlite_status = take_flag(args, "--sqlite-status")
+    sqlite_src = take_flag(args, "--sqlite-src")
+
+    tables = []  # (begin_marker, end_marker, rendered)
+    if args and os.path.isdir(args[0]):
+        cbench_dir = args[1] if len(args) > 1 and os.path.isdir(args[1]) else None
+        tables.append((CRUST_BEGIN, CRUST_END, render_crust(args[0], cbench_dir)))
+    if sqlite_status and sqlite_src:
+        if not os.path.isfile(sqlite_status) or not os.path.isdir(sqlite_src):
+            print("bad --sqlite-status / --sqlite-src paths", file=sys.stderr)
+            return 2
+        tables.append((SQLITE_BEGIN, SQLITE_END, render_sqlite(sqlite_status, sqlite_src)))
+    if not tables:
         print(__doc__, file=sys.stderr)
         return 2
-    results_dir = args[0]
-    cbench_dir = args[1] if len(args) > 1 and os.path.isdir(args[1]) else None
 
-    table = render(results_dir, cbench_dir)
     if update_target:
         doc = open(update_target, encoding="utf-8").read()
-        if BEGIN not in doc or END not in doc:
-            print(f"markers missing in {update_target}", file=sys.stderr)
-            return 2
-        head, rest = doc.split(BEGIN, 1)
-        _, tail = rest.split(END, 1)
+        for begin, end, table in tables:
+            spliced = splice(doc, begin, end, table)
+            if spliced is None:
+                print(f"markers {begin} missing in {update_target}", file=sys.stderr)
+                return 2
+            doc = spliced
         with open(update_target, "w", encoding="utf-8") as f:
-            f.write(head + BEGIN + "\n" + table + "\n" + END + tail)
+            f.write(doc)
         print(f"updated {update_target}")
     else:
-        print(table)
+        print("\n\n".join(table for _, _, table in tables))
     return 0
 
 

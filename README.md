@@ -12,7 +12,7 @@ that compiles and behaves identically to the original.
 | Metric | Result |
 |---|---|
 | Compiles | 281 / 281 SQLite corpus translation units produce Rust that compiles (rustc obj-OK) |
-| Behavioral parity | The complete SQLite command-line shell, transpiled to Rust, is byte-identical to the native build across 10 SQL test scripts, reproduced 3× under an allocator-hardened harness |
+| Behavioral parity | The complete SQLite command-line shell, transpiled to Rust, is byte-identical to the native build across 10 SQL test scripts, reproduced 3× under an allocator-hardened harness. Flagship row: [RESULTS.md](RESULTS.md#flagship--sqlite) |
 | Safety | 67.4% of generated Rust functions are fully safe (no `unsafe`); memory-unsafe constructs reduced 45.9% vs. a faithful raw-pointer baseline (further ownership work in progress) |
 | CRUST-bench (100 third-party C repos) | 18 projects convert end-to-end to fully-compiling Rust; 50% of all emitted crates compile (117/233). 19 of the 100 have broken builds of their own and could not be attempted. Full breakdown: [RESULTS.md](RESULTS.md) |
 | Release | 0.22.0 |
@@ -77,7 +77,9 @@ third-party, hand-written interfaces. We expect Tier-2 pass@1 to be low as a
 result — we're publishing it anyway, as an honest baseline rather than a
 number to hide.
 
-Results: [`RESULTS.md`](RESULTS.md) — first run recorded 2026-07-20 (Tier-1 18/100; full honest per-class breakdown).
+Results: [`RESULTS.md`](RESULTS.md) — the SQLite flagship row plus the
+CRUST-bench first run recorded 2026-07-20 (Tier-1 18/100; full honest
+per-class breakdown).
 
 ### Reproduce
 

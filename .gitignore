@@ -12,3 +12,6 @@ Cargo.lock
 
 # OS cruft
 .DS_Store
+
+# Python bytecode (report generator)
+__pycache__/
