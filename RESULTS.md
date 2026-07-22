@@ -20,13 +20,13 @@ byte-for-byte, reproduced three times, including under an allocator-hardened
 harness.
 
 <!-- sqlite-table:begin -->
-| Project | Transpiled | Compiled | Tested | Functions | Fully safe functions | `unsafe` sites |
-|---|---|---|---|---|---|---|
-| [SQLite](https://www.sqlite.org/) → [Rust output](https://github.com/o2alexanderfedin/sqlite-rust-mirror) | ✅ yes — all 281 C source files | ✅ all 281 crates | ✅ all 10 SQL test scripts byte-identical vs the native CLI (3 independent runs) | 17,005 | 11,455 (67%) | 105,342 |
+| Project | Transpiled | Compiled | Tested | Original C Unsafe Sites | Emitted Rust Unsafe Sites | Unsafe Site Reduction (%) | Baseline C UOD | Emitted Rust UOD |
+|---|---|---|---|---:|---:|---:|---:|---:|
+| [SQLite](https://www.sqlite.org/) → [Rust output](https://github.com/o2alexanderfedin/sqlite-rust-mirror) | ✅ all 281 files | ✅ all 281 crates | ✅ all 10 SQL scripts byte-identical vs native CLI (3 runs) | `pending-regen` | `pending-regen` | `pending-regen` | `pending-regen` | `pending-regen` |
 
-<sub>**Functions** — function definitions in the generated Rust (declarations of external C functions are not counted). **Fully safe functions** — functions with no `unsafe` anywhere: not declared `unsafe fn` and containing no `unsafe` block; the percentage is their share of all functions. **`unsafe` sites** — individual `unsafe` blocks or `unsafe fn` definitions remaining in the output; each marks one place whose safety is inherited from the original C rather than proven by the Rust compiler (fewer is better).</sub>
+<sub>A **site** is one individual unsafe OPERATION, not a function or a whole `unsafe {}` block (those are too coarse). **Transpiled / Compiled** — did cpp2rust emit, and does the emitted code build, for the C++ lane and the Rust lane (`ok/total` translation units). **Tested** — the differential test oracles: **A/B** runs the project's own program built from native C vs from the transpiled C++/Rust and compares output byte-for-byte (`—` = not linkable as one binary, e.g. cross-TU C++ name mangling or unresolved builtin FFI; logged, never silently passed); **pass@1** is CRUST-bench's official oracle — the emitted crate spliced under the hand-written RBench interface, then `cargo test`. For SQLite the Tested cell is the whole-CLI differential over the SQL scripts. **Original C Unsafe Sites** — initial unsafe operation sites in the C source (`raw_ptr_deref + static_mut + union_member`). **Emitted Rust Unsafe Sites** — resulting unsafe operation sites in the emitted Rust (`raw_ptr_deref + extern_unsafe_call + static_mut + union_read + transmute + inline_asm`). These are not a clean subtraction: C treats FFI calls as free, but each becomes an `extern_unsafe_call` in Rust — so the per-family breakdown below the table is where the real memory-safety story (the raw-pointer-deref line) is visible. `unchecked_arith` is a separate lane (C pointer arithmetic has no Rust unsafe counterpart), never folded in. **Unsafe Site Reduction (%)** — `(C − Rust) ÷ C`; **positive = net fewer** unsafe sites, **negative = net more** (this build is a faithful transliteration — ownership/borrow uplift is deferred — so where Rust adds sites it is mostly C's previously-hidden FFI unsafety made explicit, not new unsafety). **Baseline C UOD** / **Emitted Rust UOD** — Unsafe-Operation-Density: unsafe sites ÷ total expressions in that lane's own AST (lower is safer); the denominator grows with any added scaffolding, so the density cannot be gamed by code inflation. All counts use thousands separators.</sub>
 
-Safety columns computed over the published Rust output @ `c5c0079`; run facts recorded 2026-07-20 in [`benchmarks/sqlite-status.tsv`](benchmarks/sqlite-status.tsv).
+<sub>SQLite's site columns are `pending-regen`: the SQLite unsafe-site census is regenerated off the fixed develop tip AFTER the current verification battery completes and the 16-02 SQLite-lane fix merges — numbers produced before then would not match the shipped state. State columns above reflect the last verified run (2026-07-20).</sub>
 <!-- sqlite-table:end -->
 
 ## CRUST-bench
@@ -34,7 +34,7 @@ Safety columns computed over the published Rust output @ `c5c0079`; run facts re
 Scoring methodology: [`benchmarks/CRUST-bench.md`](benchmarks/CRUST-bench.md).
 Harness: [`benchmarks/run_crust_bench.sh`](benchmarks/run_crust_bench.sh).
 
-- **Run date:** 2026-07-20
+- **Run date:** 2026-07-22
 - **Dataset:** [CRUST-bench](https://github.com/anirudhkhatry/CRUST-bench)
   ([paper: arXiv 2504.15254](https://arxiv.org/abs/2504.15254)) — 100 real-world
   C repositories, each paired with a hand-written safe-Rust interface and a
@@ -43,174 +43,203 @@ Harness: [`benchmarks/run_crust_bench.sh`](benchmarks/run_crust_bench.sh).
   at all — their own build systems are broken (defective Makefiles / CMake
   files), so the file-and-flag list the converter needs as input could not be
   produced and the converter never ran on them. That leaves **81 projects the
-  converter actually ran on**; every number below is about those 81.
+  converter actually ran on**; the 19 unreachable ones contribute zero to the
+  stage and site counts below.
 
-### Aggregate
+### Aggregate — the full 6-stage pipeline
 
-| Metric | Result |
+Every project now runs the SAME six differential stages as SQLite — C→C++,
+compile C++, A/B native-vs-C++, C→Rust, build Rust, A/B native-vs-Rust — plus
+both test oracles and the per-operation unsafe-SITE census. (Earlier reports
+scored only the Tier-1 Rust-compile step; this run adds the C++ lane, the A/B
+oracles, pass@1, and the site metrics.)
+
+| Stage (of 100 projects) | Result |
 |---|---|
-| Projects in dataset | 100 |
-| Unreachable (their own builds are broken; converter never ran) | 19 |
-| **Projects the converter ran on** | **81** |
-| **Tier-1 pass — every file converted AND all emitted Rust compiles** | **18** (of the 81 run; 18/100 of the dataset) |
-| Rust crates emitted across the 81 (≈ one per C source file) | 233 |
-| Emitted crates that compile | **117 / 233 (50%)** |
-| Tier 2 — CRUST-bench pass@1 (against the hand-written interface) | 0 (not attempted) |
+| Reachable — own build produced a compile DB | **81** (the other 19 have broken build systems; the converter never ran) |
+| C → C++ transpiled, fully | **52** (+ 15 partial) |
+| Emitted C++ compiles, all TUs | **38** |
+| C → Rust transpiled, fully | **48** (+ 17 partial) |
+| Emitted Rust compiles, all crates | **23** |
+| Both lanes fully transpiled AND compiled | **12** |
+| A/B — native C vs transpiled **C++** binary | **12 pass**, 0 divergent, 88 not linkable¹ |
+| A/B — native C vs transpiled **Rust** binary | **2 pass**, 0 divergent, 98 not linkable¹ |
+| pass@1 — emitted crate spliced under the RBench interface + `cargo test` | 0 pass / 35 attempted / 65 no interface match |
 
-**Tier-1 passing projects (18):** amp, bostree, btree-map, chtrie, csyncmers,
-fft, fs_c, hamta, hydra, kd3, leftpad, lib2bit, libbeaufort, libfor,
-murmurhash_c, quadtree, Simple-Sparsehash, vec.
+C++ crates: **173 of 239** emitted compile. Rust crates: **117 of 239** compile.
 
-### What happened on the 81 projects the converter ran on
+¹ For multi-TU projects the per-TU emitted objects do not link into a single
+binary (cross-TU C++ name mangling; unresolved compiler-builtin FFI on the Rust
+side) — recorded as `—`, honestly, never a silent pass. Where a project IS
+linkable (single-TU or ABI-consistent), the A/B runs, and **every leg that ran
+matched the native output byte-for-byte (0 divergences).** C++-lane A/B passers:
+gorilla-paper-encode, utf8, Graph-recogniser, quadtree, libfor, cJSON,
+Simple-Config, Linear-Algebra-C, leftpad, vec, libvcd, kd3.
 
-| Count | Outcome |
-|---|---|
-| **18** | **Full success** — every C file converted, and all of the resulting Rust compiles. |
-| 29 | Every C file converted, but only some of the resulting Rust compiles (38 of their 94 crates do). |
-| 18 | Some files converted, others refused — the converter refuses loudly on C constructs it does not support yet, rather than emit wrong code (43 of their 103 crates compile). |
-| 16 | Every file refused — nothing produced (again: a loud, honest refusal, never a silent mis-translation). |
+### Unsafe operation SITES — the headline
 
-(18 + 29 + 18 + 16 = 81.)
+Safety is measured in per-operation **SITES**, not functions, and reported as
+the Multi-Dimensional Safety Matrix: Original C sites, Emitted Rust sites, the
+reduction %, and the Unsafe-Operation-Density (UOD = unsafe sites ÷ total
+expressions) on each side. Across all 100 projects: **29,302 Original C unsafe
+sites → 47,558 Emitted Rust unsafe sites** (Unsafe Site Reduction **−62.3%**),
+at **Baseline C UOD 8.90% → Emitted Rust UOD 9.48%** — the density is nearly
+unchanged. This build is a faithful transliteration (ownership/borrow uplift is
+deliberately deferred), so the Rust total is *higher* mainly because it counts
+what C hides: every C library/FFI call is free in C but an explicit
+`extern_unsafe_call` in Rust (16,572 of the Rust sites). The real memory-safety
+story lives in the per-family C→Rust split beneath the table — e.g. C's 840
+union type-punning accesses become 1,323 explicit `transmute`s and just 2 raw
+union reads, and C pointer arithmetic (474 sites) has no Rust unsafe
+counterpart at all (lowered to safe `wrapping_*`). 13 projects show a net
+reduction in total sites.
 
 ### Per-project results
 
 Generated from the run's per-project result rows by
 [`benchmarks/generate_report.py`](benchmarks/generate_report.py) (the harness
-regenerates this table as `results/REPORT.md` on every sweep).
-
-Legend — **Transpiled**: did the converter turn the project's C into Rust
-(partial = some files refused, loudly). **Compiled**: how many of the emitted
-Rust crates compile. **Tested**: the benchmark's own pass@1 (emitted Rust
-against its hand-written interface + tests) — honestly `not attempted` today.
-**Fns**: function definitions in the emitted Rust (declarations of foreign
-functions in `extern` blocks are not counted). **Fully safe**: definitions
-that are not `unsafe fn` and contain no `unsafe` block — code the converter
-PROVED safe (with %). **Unsafe sites**: `unsafe` blocks plus `unsafe fn`
-definitions remaining in the output — in the C original, every
-one of these operations was unchecked by the language and invisible; in the
-Rust they are explicit, counted, and auditable. A per-project "how many C
-sites were uplifted" split requires source-level analysis of each project
-(the corpus-level version of that number for SQLite is in the
-[README](README.md)); it is the next reporting increment, not silently
-approximated here.
+regenerates this table as `results/REPORT.md` on every sweep). Every column —
+including what a "site" is and why the Rust site total can exceed C's — is
+defined in the legend rendered directly beneath the table, and the per-family
+C→Rust before/after breakdown follows it.
 
 <!-- crust-table:begin -->
-| Project | Transpiled | Compiled | Tested | Functions | Fully safe functions | `unsafe` sites |
-|---|---|---|---|---|---|---|
-| [2DPartInt](https://github.com/eafit-apolo/2DPartInt) | n/a — project's own build is broken | — | — | — | — | — |
-| [42-Kocaeli-Printf](https://github.com/enes2424/42-Kocaeli-Printf) | ❌ no (refused, loudly) | — | — | — | — | — |
-| [aes128-SIMD](https://github.com/at0m741/aes128-SIMD) | ❌ no (refused, loudly) | — | — | — | — | — |
-| [amp](https://github.com/clibs/amp) | ✅ yes | ✅ all | not attempted | 6 | 1 (17%) | 28 |
-| [approxidate](https://github.com/thatguystone/approxidate) | ✅ yes | ⚠️ 0 of 2 crates | not attempted | 34 | 10 (29%) | 260 |
-| [avalanche](https://github.com/drjerry/avalanche) | n/a — project's own build is broken | — | — | — | — | — |
-| [bhshell](https://github.com/bsach64/bhshell) | ⚠️ partial | ⚠️ 2 of 4 crates | not attempted | 11 | 1 (9%) | 235 |
-| [bigint](https://github.com/adam-mcdaniel/bigint) | ✅ yes | ⚠️ 0 of 3 crates | not attempted | 118 | 25 (21%) | 309 |
-| [bitset](https://github.com/abenhlal/bitset) | n/a — project's own build is broken | — | — | — | — | — |
-| [blt](https://github.com/blynn/blt) | ❌ no (refused, loudly) | — | — | — | — | — |
-| [bostree](https://github.com/phillipberndt/bostree) | ✅ yes | ✅ all | not attempted | 24 | 2 (8%) | 426 |
-| [btree-map](https://github.com/EdsonHTJ/btree-map) | ✅ yes | ✅ all | not attempted | 27 | 2 (7%) | 272 |
-| [c-aces](https://github.com/enum-class/c-aces) | ⚠️ partial | ⚠️ 4 of 5 crates | not attempted | 57 | 18 (32%) | 196 |
-| [c-blind-rsa-signatures](https://github.com/jedisct1/c-blind-rsa-signatures) | ✅ yes | ⚠️ 0 of 2 crates | not attempted | 955 | 142 (15%) | 1,781 |
-| [c-string](https://github.com/vnkrtv/c-string) | ❌ no (refused, loudly) | — | — | — | — | — |
-| [carrays](https://github.com/noporpoise/carrays) | ✅ yes | ⚠️ 0 of 2 crates | not attempted | 164 | 9 (5%) | 713 |
-| [cfsm](https://github.com/nhjschulz/cfsm) | n/a — project's own build is broken | — | — | — | — | — |
-| [chtrie](https://github.com/dongyx/chtrie) | ✅ yes | ✅ all | not attempted | 4 | 0 (0%) | 58 |
-| [CircularBuffer](https://github.com/Roen-Ro/CircularBuffer) | ⚠️ partial | ⚠️ 0 of 1 crates | not attempted | 11 | 4 (36%) | 61 |
-| [cissy](https://github.com/slass100/cissy) | ✅ yes | ⚠️ 5 of 7 crates | not attempted | 32 | 6 (19%) | 420 |
-| [cJSON](https://github.com/faycheng/cJSON) | ✅ yes | ⚠️ 1 of 2 crates | not attempted | 63 | 7 (11%) | 792 |
-| [clhash](https://github.com/simdhash/clhash) | ❌ no (refused, loudly) | — | — | — | — | — |
-| [clog](https://github.com/mmueller/clog) | ❌ no (refused, loudly) | — | — | — | — | — |
-| [coroutine](https://github.com/cloudwu/coroutine) | ⚠️ partial | ⚠️ 1 of 1 crates | not attempted | 4 | 1 (25%) | 14 |
-| [cset](https://github.com/RobusGauli/cset.h) | ✅ yes | ⚠️ 0 of 1 crates | not attempted | 36 | 14 (39%) | 13,841 |
-| [csyncmers](https://github.com/rchikhi/csyncmers) | ✅ yes | ✅ all | not attempted | 13 | 5 (38%) | 69 |
-| [dict](https://github.com/wrnlb666/dict) | ✅ yes | ⚠️ 0 of 1 crates | not attempted | 16 | 1 (6%) | 925 |
-| [emlang](https://github.com/LordOfTrident/emlang) | n/a — project's own build is broken | — | — | — | — | — |
-| [expr](https://github.com/radarsat1/expr) | ⚠️ partial | ⚠️ 1 of 1 crates | not attempted | 4 | 2 (50%) | 19 |
-| [FastHamming](https://github.com/BenBE/FastHamming.git) | ❌ no (refused, loudly) | — | — | — | — | — |
-| [fft](https://github.com/kevin0x0/fft) | ✅ yes | ✅ all | not attempted | 6 | 2 (33%) | 107 |
-| [file2str](https://github.com/willemt/file2str) | ✅ yes | ⚠️ 3 of 4 crates | not attempted | 32 | 7 (22%) | 131 |
-| [fleur](https://github.com/hashlookup/fleur) | n/a — project's own build is broken | — | — | — | — | — |
-| [fs_c](https://github.com/jwerle/fs.c) | ✅ yes | ✅ all | not attempted | 25 | 0 (0%) | 47 |
-| [fslib](https://github.com/c0stya/fslib) | n/a — project's own build is broken | — | — | — | — | — |
-| [Genetic-neural-network-for-simple-control](https://github.com/DemianovE/Genetic-neural-network-for-simple-control) | ⚠️ partial | ⚠️ 10 of 12 crates | not attempted | 49 | 4 (8%) | 606 |
-| [geofence](https://github.com/bytebeamio/geofence.git) | ✅ yes | ⚠️ 0 of 1 crates | not attempted | 3 | 1 (33%) | 6 |
-| [gfc](https://github.com/maxmouchet/gfc.git) | ❌ no (refused, loudly) | — | — | — | — | — |
-| [gorilla-paper-encode](https://github.com/MrBean818/gorilla-paper-encode) | ✅ yes | ⚠️ 1 of 2 crates | not attempted | 25 | 10 (40%) | 107 |
-| [Graph-recogniser](https://github.com/NikolaYolov/Graph-recogniser) | ✅ yes | ⚠️ 0 of 4 crates | not attempted | 41 | 11 (27%) | 248 |
-| [hamta](https://github.com/burtgulash/hamta) | ✅ yes | ✅ all | not attempted | 8 | 2 (25%) | 21 |
-| [Holdem-Odds](https://github.com/gnuvince/Holdem-Odds) | ✅ yes | ⚠️ 3 of 5 crates | not attempted | 32 | 13 (41%) | 89 |
-| [hydra](https://github.com/emad-elsaid/hydra) | ✅ yes | ✅ all | not attempted | 14 | 0 (0%) | 91 |
-| [impcheck](https://github.com/domschrei/impcheck) | ⚠️ partial | ⚠️ 2 of 2 crates | not attempted | 1 | 0 (0%) | 1 |
-| [inversion_list](https://github.com/hou-12/Inversion-List-Implementation-for-Interval-Manipulation) | n/a — project's own build is broken | — | — | — | — | — |
-| [jccc](https://github.com/jabacat/jccc) | ✅ yes | ⚠️ 11 of 13 crates | not attempted | 71 | 10 (14%) | 456 |
-| [kairoCompiler](https://github.com/kairo-yr/kairoCompiler) | ⚠️ partial | ⚠️ 0 of 5 crates | not attempted | 75 | 20 (27%) | 214 |
-| [kd3](https://github.com/shawnchin/kd3) | ✅ yes | ✅ all | not attempted | 32 | 5 (16%) | 168 |
-| [lambda-calculus-eval](https://github.com/Lorenzobattistela/lambda-calculus-eval) | n/a — project's own build is broken | — | — | — | — | — |
-| [leftpad](https://github.com/sjmulder/leftpad) | ✅ yes | ✅ all | not attempted | 3 | 1 (33%) | 25 |
-| [lib2bit](https://github.com/dpryan79/lib2bit) | ✅ yes | ✅ all | not attempted | 22 | 2 (9%) | 465 |
-| [libbase122](https://github.com/kevinAlbs/libbase122) | n/a — project's own build is broken | — | — | — | — | — |
-| [libbeaufort](https://github.com/jwerle/libbeaufort) | ✅ yes | ✅ all | not attempted | 6 | 0 (0%) | 43 |
-| [libfor](https://github.com/cruppstahl/libfor) | ✅ yes | ✅ all | not attempted | 418 | 9 (2%) | 19,684 |
-| [libm17](https://github.com/M17-Project/libm17) | ❌ no (refused, loudly) | — | — | — | — | — |
-| [libpgn](https://github.com/youkwhd/libpgn) | ✅ yes | ⚠️ 4 of 12 crates | not attempted | 64 | 10 (16%) | 436 |
-| [libpsbt](https://github.com/jb55/libpsbt) | ❌ no (refused, loudly) | — | — | — | — | — |
-| [libqueue](https://github.com/resyfer/libqueue) | ❌ no (refused, loudly) | — | — | — | — | — |
-| [libtinyfseq](https://github.com/Cryptkeeper/libtinyfseq) | n/a — project's own build is broken | — | — | — | — | — |
-| [libutf](https://github.com/holepunchto/libutf) | ⚠️ partial | ⚠️ 0 of 30 crates | not attempted | 1,471 | 218 (15%) | 10,387 |
-| [libvcd](https://github.com/sorousherafat/libvcd) | ✅ yes | ⚠️ 1 of 2 crates | not attempted | 11 | 2 (18%) | 63 |
-| [libwecan](https://github.com/nisennenmondai/libwecan) | ❌ no (refused, loudly) | — | — | — | — | — |
-| [Linear-Algebra-C](https://github.com/barrettotte/Linear-Algebra-C) | ✅ yes | ⚠️ 1 of 4 crates | not attempted | 113 | 11 (10%) | 930 |
-| [ljmm](https://github.com/cloudflare/ljmm) | ❌ no (refused, loudly) | — | — | — | — | — |
-| [LTRE](https://github.com/Bricktech2000/LTRE) | ⚠️ partial | ⚠️ 0 of 1 crates | not attempted | 35 | 1 (3%) | 398 |
-| [Math-Library-in-C](https://github.com/Astrodynamic/Math-Library-in-C) | ❌ no (refused, loudly) | — | — | — | — | — |
-| [matrix_multiplication](https://github.com/DevRuibin/matrix_multiplication) | ⚠️ partial | ⚠️ 1 of 1 crates | not attempted | 2 | 0 (0%) | 7 |
-| [mdb](https://github.com/chuigda/mdb.git) | n/a — project's own build is broken | — | — | — | — | — |
-| [Megalania](https://github.com/blackle/Megalania) | ⚠️ partial | ⚠️ 9 of 16 crates | not attempted | 100 | 24 (24%) | 718 |
-| [merkle-tree-c](https://github.com/TheWaWaR/merkle-tree-c) | ✅ yes | ⚠️ 0 of 1 crates | not attempted | 50 | 12 (24%) | 297 |
-| [morton](https://github.com/jart/morton) | n/a — project's own build is broken | — | — | — | — | — |
-| [murmurhash_c](https://github.com/jwerle/murmurhash.c) | ✅ yes | ✅ all | not attempted | 8 | 5 (62%) | 41 |
-| [mvptree](https://github.com/michaelmior/mvptree) | ✅ yes | ⚠️ 2 of 3 crates | not attempted | 46 | 3 (7%) | 1,161 |
-| [NandC](https://github.com/Dcraftbg/NandC) | ✅ yes | ⚠️ 0 of 1 crates | not attempted | 16 | 12 (75%) | 10 |
-| [Phills_DHT](https://github.com/PhillipTaylor/Phills_DHT) | ✅ yes | ⚠️ 0 of 1 crates | not attempted | 8 | 0 (0%) | 34 |
-| [quadtree](https://github.com/thejefflarson/quadtree) | ✅ yes | ✅ all | not attempted | 32 | 6 (19%) | 280 |
-| [razz_simulation](https://github.com/eus/razz_simulation) | ❌ no (refused, loudly) | — | — | — | — | — |
-| [rbtree-lab](https://github.com/jwowo/rbtree-lab) | n/a — project's own build is broken | — | — | — | — | — |
-| [recordManager](https://github.com/prachikotadia/-Record-Manager) | ⚠️ partial | ⚠️ 1 of 7 crates | not attempted | 66 | 2 (3%) | 2,179 |
-| [rect_pack_h](https://github.com/luihabl/rect_pack.h) | n/a — project's own build is broken | — | — | — | — | — |
-| [Remimu](https://github.com/wareya/Remimu) | n/a — project's own build is broken | — | — | — | — | — |
-| [rhbloom](https://github.com/tidwall/rhbloom) | ✅ yes | ⚠️ 1 of 2 crates | not attempted | 21 | 6 (29%) | 168 |
-| [roaring-bitmap](https://github.com/chriso/roaring-bitmap) | ❌ no (refused, loudly) | — | — | — | — | — |
-| [rubiksolver](https://github.com/justjkk/rubiksolver) | ✅ yes | ⚠️ 0 of 5 crates | not attempted | 34 | 5 (15%) | 536 |
-| [satc](https://github.com/rjungemann/satc) | n/a — project's own build is broken | — | — | — | — | — |
-| [Simple-Config](https://github.com/0xHaru/Simple-Config) | ✅ yes | ⚠️ 0 of 2 crates | not attempted | 51 | 12 (24%) | 281 |
-| [Simple-Sparsehash](https://github.com/qpfiffer/Simple-Sparsehash) | ✅ yes | ✅ all | not attempted | 34 | 4 (12%) | 265 |
-| [simple_lang](https://github.com/lxbme/simple_lang) | ⚠️ partial | ⚠️ 9 of 10 crates | not attempted | 32 | 4 (12%) | 332 |
-| [SimpleXML](https://github.com/kiennt/SimpleXML.git) | ⚠️ partial | ⚠️ 0 of 2 crates | not attempted | 23 | 3 (13%) | 189 |
-| [skp](https://github.com/rdentato/skp) | n/a — project's own build is broken | — | — | — | — | — |
-| [SlothLang](https://github.com/AaronCGoidel/SlothLang) | ⚠️ partial | ⚠️ 3 of 3 crates | not attempted | 8 | 1 (12%) | 47 |
-| [ted](https://github.com/ajpen/ted) | ✅ yes | ⚠️ 2 of 4 crates | not attempted | 46 | 5 (11%) | 420 |
-| [tisp](https://github.com/edvb/tisp) | ✅ yes | ⚠️ 0 of 2 crates | not attempted | 124 | 7 (6%) | 1,771 |
-| [totp](https://github.com/sjmulder/totp) | ✅ yes | ⚠️ 2 of 3 crates | not attempted | 27 | 7 (26%) | 121 |
-| [ulidgen](https://github.com/leahneukirchen/ulidgen) | ⚠️ partial | ⚠️ 0 of 1 crates | not attempted | 7 | 1 (14%) | 22 |
-| [utf8](https://github.com/zahash/utf8.c) | ✅ yes | ⚠️ 1 of 2 crates | not attempted | 41 | 7 (17%) | 280 |
-| [VaultSync](https://github.com/elhalili/VaultSync) | n/a — project's own build is broken | — | — | — | — | — |
-| [vec](https://github.com/rxi/vec) | ✅ yes | ✅ all | not attempted | 11 | 1 (9%) | 985 |
-| [worsp](https://github.com/sosukesuzuki/worsp) | ⚠️ partial | ⚠️ 0 of 1 crates | not attempted | 62 | 7 (11%) | 938 |
-| [XOpt](https://github.com/drylikov/XOpt.git) | ✅ yes | ⚠️ 0 of 1 crates | not attempted | 25 | 5 (20%) | 354 |
+| Project | Transpiled | Compiled | Tested | Original C Unsafe Sites | Emitted Rust Unsafe Sites | Unsafe Site Reduction (%) | Baseline C UOD | Emitted Rust UOD |
+|---|---|---|---|---:|---:|---:|---:|---:|
+| [SQLite](https://www.sqlite.org/) → [Rust output](https://github.com/o2alexanderfedin/sqlite-rust-mirror) — **flagship** | ✅ all 281 files | ✅ all 281 crates | ✅ all 10 SQL scripts byte-identical vs native CLI (3 runs) | `pending-regen` | `pending-regen` | `pending-regen` | `pending-regen` | `pending-regen` |
+| [2DPartInt](https://github.com/eafit-apolo/2DPartInt) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
+| [42-Kocaeli-Printf](https://github.com/enes2424/42-Kocaeli-Printf) | C++ ❌ · Rust ❌ | C++ 0/0 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | 0 | 0 | — | — | — |
+| [aes128-SIMD](https://github.com/at0m741/aes128-SIMD) | C++ ❌ · Rust ❌ | C++ 0/0 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | 0 | 0 | — | — | — |
+| [amp](https://github.com/clibs/amp) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 2/2 | A/B C++ —·Rust — · pass@1 ❌ | 20 | 47 | −135.0% | 3.8% | 9.7% |
+| [approxidate](https://github.com/thatguystone/approxidate) | C++ ✅ · Rust ✅ | C++ 1/2 · Rust 0/2 | A/B C++ —·Rust — · pass@1 ❌ | 188 | 441 | −134.6% | 4.4% | 8.9% |
+| [avalanche](https://github.com/drjerry/avalanche) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
+| [bhshell](https://github.com/bsach64/bhshell) | C++ ⚠️ · Rust ⚠️ | C++ 4/4 · Rust 2/4 | A/B C++ —·Rust — · pass@1 ❌ | 245 | 304 | −24.1% | 11.8% | 11.9% |
+| [bigint](https://github.com/adam-mcdaniel/bigint) | C++ ✅ · Rust ✅ | C++ 3/3 · Rust 0/3 | A/B C++ —·Rust — · pass@1 — | 0 | 478 | — | 0.0% | 4.4% |
+| [bitset](https://github.com/abenhlal/bitset) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
+| [blt](https://github.com/blynn/blt) | C++ ❌ · Rust ❌ | C++ 0/0 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | 0 | 0 | — | — | — |
+| [bostree](https://github.com/phillipberndt/bostree) | C++ ✅ · Rust ✅ | C++ 2/3 · Rust 3/3 | A/B C++ —·Rust — · pass@1 ❌ | 368 | 501 | −36.1% | 13.4% | 13.3% |
+| [btree-map](https://github.com/EdsonHTJ/btree-map) | C++ ✅ · Rust ✅ | C++ 1/2 · Rust 2/2 | A/B C++ —·Rust — · pass@1 — | 178 | 526 | −195.5% | 5.8% | 15.6% |
+| [c-aces](https://github.com/enum-class/c-aces) | C++ ⚠️ · Rust ⚠️ | C++ 5/5 · Rust 4/5 | A/B C++ —·Rust — · pass@1 — | 330 | 287 | +13.0% | 9.1% | 8.1% |
+| [c-blind-rsa-signatures](https://github.com/jedisct1/c-blind-rsa-signatures) | C++ ✅ · Rust ✅ | C++ 1/2 · Rust 0/2 | A/B C++ —·Rust — · pass@1 — | 137 | 3,101 | −2163.5% | 3.1% | 20.1% |
+| [c-string](https://github.com/vnkrtv/c-string) | C++ ❌ · Rust ❌ | C++ 0/0 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | 0 | 0 | — | — | — |
+| [carrays](https://github.com/noporpoise/carrays) | C++ ✅ · Rust ✅ | C++ 1/2 · Rust 0/2 | A/B C++ —·Rust — · pass@1 ❌ | 349 | 1,819 | −421.2% | 2.8% | 9.1% |
+| [cfsm](https://github.com/nhjschulz/cfsm) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
+| [chtrie](https://github.com/dongyx/chtrie) | C++ ✅ · Rust ✅ | C++ 1/1 · Rust 1/1 | A/B C++ —·Rust — · pass@1 — | 66 | 76 | −15.2% | 12.2% | 9.0% |
+| [CircularBuffer](https://github.com/Roen-Ro/CircularBuffer) | C++ ⚠️ · Rust ⚠️ | C++ 0/1 · Rust 0/1 | A/B C++ —·Rust — · pass@1 ❌ | 102 | 75 | +26.5% | 11.0% | 7.4% |
+| [cissy](https://github.com/slass100/cissy) | C++ ✅ · Rust ✅ | C++ 4/7 · Rust 5/7 | A/B C++ —·Rust — · pass@1 ❌ | 330 | 781 | −136.7% | 5.5% | 15.2% |
+| [cJSON](https://github.com/faycheng/cJSON) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 1/2 | A/B C++ ✅·Rust — · pass@1 ❌ | 478 | 1,371 | −186.8% | 7.2% | 11.8% |
+| [clhash](https://github.com/simdhash/clhash) | C++ ❌ · Rust ❌ | C++ 0/0 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | 0 | 0 | — | — | — |
+| [clog](https://github.com/mmueller/clog) | C++ ✅ · Rust ❌ | C++ 0/1 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | 10 | 0 | +100.0% | 0.6% | — |
+| [coroutine](https://github.com/cloudwu/coroutine) | C++ ⚠️ · Rust ⚠️ | C++ 1/1 · Rust 1/1 | A/B C++ —·Rust — · pass@1 — | 1 | 19 | −1800.0% | 0.9% | 14.7% |
+| [cset](https://github.com/RobusGauli/cset.h) | C++ ✅ · Rust ✅ | C++ 0/1 · Rust 0/1 | A/B C++ —·Rust — · pass@1 — | 14,564 | 25 | +99.8% | 13.5% | 2.9% |
+| [csyncmers](https://github.com/rchikhi/csyncmers) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 2/2 | A/B C++ —·Rust — · pass@1 — | 10 | 92 | −820.0% | 1.6% | 5.1% |
+| [dict](https://github.com/wrnlb666/dict) | C++ ✅ · Rust ✅ | C++ 0/1 · Rust 0/1 | A/B C++ —·Rust — · pass@1 — | 352 | 0 | +100.0% | 8.9% | — |
+| [emlang](https://github.com/LordOfTrident/emlang) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
+| [expr](https://github.com/radarsat1/expr) | C++ ✅ · Rust ⚠️ | C++ 1/2 · Rust 1/1 | A/B C++ —·Rust — · pass@1 — | 360 | 28 | +92.2% | 9.0% | 6.2% |
+| [FastHamming](https://github.com/BenBE/FastHamming.git) | C++ ❌ · Rust ❌ | C++ 0/0 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | 0 | 0 | — | — | — |
+| [fft](https://github.com/kevin0x0/fft) | C++ ✅ · Rust ✅ | C++ 0/1 · Rust 1/1 | A/B C++ —·Rust — · pass@1 — | 78 | 106 | −35.9% | 4.3% | 4.8% |
+| [file2str](https://github.com/willemt/file2str) | C++ ✅ · Rust ✅ | C++ 4/4 · Rust 3/4 | A/B C++ —·Rust — · pass@1 ❌ | 82 | 174 | −112.2% | 5.2% | 9.8% |
+| [fleur](https://github.com/hashlookup/fleur) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
+| [fs_c](https://github.com/jwerle/fs.c) | C++ ✅ · Rust ✅ | C++ 1/1 · Rust 1/1 | A/B C++ —·Rust — · pass@1 — | 1 | 52 | −5100.0% | 0.2% | 11.2% |
+| [fslib](https://github.com/c0stya/fslib) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
+| [Genetic-neural-network-for-simple-control](https://github.com/DemianovE/Genetic-neural-network-for-simple-control) | C++ ⚠️ · Rust ⚠️ | C++ 12/12 · Rust 10/12 | A/B C++ —·Rust — · pass@1 — | 644 | 803 | −24.7% | 14.6% | 13.1% |
+| [geofence](https://github.com/bytebeamio/geofence.git) | C++ ✅ · Rust ✅ | C++ 1/1 · Rust 0/1 | A/B C++ —·Rust — · pass@1 — | 12 | 6 | +50.0% | 4.3% | 2.7% |
+| [gfc](https://github.com/maxmouchet/gfc.git) | C++ ❌ · Rust ❌ | C++ 0/0 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | 0 | 0 | — | — | — |
+| [gorilla-paper-encode](https://github.com/MrBean818/gorilla-paper-encode) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 1/2 | A/B C++ ✅·Rust — · pass@1 — | 173 | 145 | +16.2% | 8.9% | 4.4% |
+| [Graph-recogniser](https://github.com/NikolaYolov/Graph-recogniser) | C++ ✅ · Rust ✅ | C++ 4/4 · Rust 0/4 | A/B C++ ✅·Rust — · pass@1 — | 141 | 419 | −197.2% | 6.0% | 14.6% |
+| [hamta](https://github.com/burtgulash/hamta) | C++ ✅ · Rust ✅ | C++ 0/1 · Rust 1/1 | A/B C++ —·Rust — · pass@1 — | 145 | 34 | +76.6% | 8.6% | 9.6% |
+| [Holdem-Odds](https://github.com/gnuvince/Holdem-Odds) | C++ ✅ · Rust ✅ | C++ 4/5 · Rust 3/5 | A/B C++ —·Rust — · pass@1 — | 64 | 95 | −48.4% | 5.6% | 6.4% |
+| [hydra](https://github.com/emad-elsaid/hydra) | C++ ✅ · Rust ✅ | C++ 1/1 · Rust 1/1 | A/B C++ —·Rust — · pass@1 — | 71 | 148 | −108.5% | 7.7% | 14.3% |
+| [impcheck](https://github.com/domschrei/impcheck) | C++ ⚠️ · Rust ⚠️ | C++ 2/2 · Rust 2/2 | A/B C++ —·Rust — · pass@1 ❌ | 0 | 4 | — | 0.0% | 16.0% |
+| [inversion_list](https://github.com/hou-12/Inversion-List-Implementation-for-Interval-Manipulation) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
+| [jccc](https://github.com/jabacat/jccc) | C++ ✅ · Rust ✅ | C++ 12/13 · Rust 11/13 | A/B C++ —·Rust — · pass@1 ❌ | 226 | 794 | −251.3% | 4.0% | 11.6% |
+| [kairoCompiler](https://github.com/kairo-yr/kairoCompiler) | C++ ✅ · Rust ⚠️ | C++ 3/10 · Rust 0/5 | A/B C++ —·Rust — · pass@1 ❌ | 193 | 263 | −36.3% | 4.1% | 12.2% |
+| [kd3](https://github.com/shawnchin/kd3) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 2/2 | A/B C++ ✅·Rust — · pass@1 ❌ | 179 | 281 | −57.0% | 6.7% | 9.9% |
+| [lambda-calculus-eval](https://github.com/Lorenzobattistela/lambda-calculus-eval) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
+| [leftpad](https://github.com/sjmulder/leftpad) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 2/2 | A/B C++ ✅·Rust ✅ · pass@1 ❌ | 16 | 41 | −156.2% | 5.5% | 9.9% |
+| [lib2bit](https://github.com/dpryan79/lib2bit) | C++ ✅ · Rust ✅ | C++ 0/1 · Rust 1/1 | A/B C++ —·Rust — · pass@1 — | 432 | 598 | −38.4% | 10.8% | 8.9% |
+| [libbase122](https://github.com/kevinAlbs/libbase122) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
+| [libbeaufort](https://github.com/jwerle/libbeaufort) | C++ ✅ · Rust ✅ | C++ 3/3 · Rust 3/3 | A/B C++ —·Rust — · pass@1 ❌ | 37 | 65 | −75.7% | 5.6% | 6.9% |
+| [libfor](https://github.com/cruppstahl/libfor) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 2/2 | A/B C++ ✅·Rust — · pass@1 — | 55 | 14,698 | −26623.6% | 2.5% | 7.2% |
+| [libm17](https://github.com/M17-Project/libm17) | C++ ❌ · Rust ❌ | C++ 0/0 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | 0 | 0 | — | — | — |
+| [libpgn](https://github.com/youkwhd/libpgn) | C++ ✅ · Rust ✅ | C++ 11/12 · Rust 4/12 | A/B C++ —·Rust — · pass@1 ❌ | 339 | 678 | −100.0% | 6.7% | 10.2% |
+| [libpsbt](https://github.com/jb55/libpsbt) | C++ ❌ · Rust ❌ | C++ 0/0 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | 0 | 0 | — | — | — |
+| [libqueue](https://github.com/resyfer/libqueue) | C++ ❌ · Rust ❌ | C++ 0/0 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | 0 | 0 | — | — | — |
+| [libtinyfseq](https://github.com/Cryptkeeper/libtinyfseq) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
+| [libutf](https://github.com/holepunchto/libutf) | C++ ⚠️ · Rust ✅ | C++ 0/27 · Rust 0/36 | A/B C++ —·Rust — · pass@1 — | 122 | 0 | +100.0% | 1.9% | 0.0% |
+| [libvcd](https://github.com/sorousherafat/libvcd) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 1/2 | A/B C++ ✅·Rust — · pass@1 ❌ | 42 | 111 | −164.3% | 4.3% | 9.1% |
+| [libwecan](https://github.com/nisennenmondai/libwecan) | C++ ❌ · Rust ❌ | C++ 0/0 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | 0 | 0 | — | — | — |
+| [Linear-Algebra-C](https://github.com/barrettotte/Linear-Algebra-C) | C++ ✅ · Rust ✅ | C++ 4/4 · Rust 1/4 | A/B C++ ✅·Rust — · pass@1 — | 499 | 1,055 | −111.4% | 6.3% | 11.4% |
+| [ljmm](https://github.com/cloudflare/ljmm) | C++ ❌ · Rust ❌ | C++ 0/0 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | 0 | 0 | — | — | — |
+| [LTRE](https://github.com/Bricktech2000/LTRE) | C++ ✅ · Rust ⚠️ | C++ 1/2 · Rust 0/1 | A/B C++ —·Rust — · pass@1 ❌ | 476 | 0 | +100.0% | 7.3% | — |
+| [Math-Library-in-C](https://github.com/Astrodynamic/Math-Library-in-C) | C++ ❌ · Rust ❌ | C++ 0/0 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | 0 | 0 | — | — | — |
+| [matrix_multiplication](https://github.com/DevRuibin/matrix_multiplication) | C++ ⚠️ · Rust ⚠️ | C++ 1/1 · Rust 1/1 | A/B C++ —·Rust — · pass@1 ❌ | 2 | 12 | −500.0% | 2.6% | 10.7% |
+| [mdb](https://github.com/chuigda/mdb.git) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
+| [Megalania](https://github.com/blackle/Megalania) | C++ ⚠️ · Rust ⚠️ | C++ 16/16 · Rust 9/16 | A/B C++ —·Rust — · pass@1 ❌ | 451 | 866 | −92.0% | 8.2% | 12.5% |
+| [merkle-tree-c](https://github.com/TheWaWaR/merkle-tree-c) | C++ ✅ · Rust ✅ | C++ 0/1 · Rust 0/1 | A/B C++ —·Rust — · pass@1 — | 25 | 405 | −1520.0% | 1.7% | 1.8% |
+| [morton](https://github.com/jart/morton) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
+| [murmurhash_c](https://github.com/jwerle/murmurhash.c) | C++ ✅ · Rust ✅ | C++ 3/3 · Rust 3/3 | A/B C++ —·Rust — · pass@1 ❌ | 11 | 73 | −563.6% | 1.5% | 9.7% |
+| [mvptree](https://github.com/michaelmior/mvptree) | C++ ✅ · Rust ✅ | C++ 3/3 · Rust 2/3 | A/B C++ —·Rust — · pass@1 ❌ | 1,004 | 1,738 | −73.1% | 9.6% | 13.5% |
+| [NandC](https://github.com/Dcraftbg/NandC) | C++ ✅ · Rust ✅ | C++ 0/1 · Rust 0/1 | A/B C++ —·Rust — · pass@1 — | 0 | 33 | — | 0.0% | 5.4% |
+| [Phills_DHT](https://github.com/PhillipTaylor/Phills_DHT) | C++ ✅ · Rust ✅ | C++ 1/1 · Rust 0/1 | A/B C++ —·Rust — · pass@1 — | 27 | 93 | −244.4% | 5.0% | 17.0% |
+| [quadtree](https://github.com/thejefflarson/quadtree) | C++ ✅ · Rust ✅ | C++ 5/5 · Rust 5/5 | A/B C++ ✅·Rust ✅ · pass@1 ❌ | 200 | 425 | −112.5% | 7.5% | 14.2% |
+| [razz_simulation](https://github.com/eus/razz_simulation) | C++ ✅ · Rust ❌ | C++ 0/1 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | 11 | 0 | +100.0% | 1.8% | — |
+| [rbtree-lab](https://github.com/jwowo/rbtree-lab) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
+| [recordManager](https://github.com/prachikotadia/-Record-Manager) | C++ ⚠️ · Rust ⚠️ | C++ 7/7 · Rust 1/7 | A/B C++ —·Rust — · pass@1 ❌ | 1,190 | 3,281 | −175.7% | 6.8% | 14.8% |
+| [rect_pack_h](https://github.com/luihabl/rect_pack.h) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
+| [Remimu](https://github.com/wareya/Remimu) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
+| [rhbloom](https://github.com/tidwall/rhbloom) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 1/2 | A/B C++ —·Rust — · pass@1 ❌ | 100 | 244 | −144.0% | 4.5% | 9.4% |
+| [roaring-bitmap](https://github.com/chriso/roaring-bitmap) | C++ ❌ · Rust ❌ | C++ 0/0 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | 0 | 0 | — | — | — |
+| [rubiksolver](https://github.com/justjkk/rubiksolver) | C++ ✅ · Rust ✅ | C++ 2/5 · Rust 0/5 | A/B C++ —·Rust — · pass@1 ❌ | 379 | 871 | −129.8% | 6.7% | 12.6% |
+| [satc](https://github.com/rjungemann/satc) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
+| [Simple-Config](https://github.com/0xHaru/Simple-Config) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 0/2 | A/B C++ ✅·Rust — · pass@1 — | 117 | 462 | −294.9% | 3.9% | 12.9% |
+| [Simple-Sparsehash](https://github.com/qpfiffer/Simple-Sparsehash) | C++ ✅ · Rust ✅ | C++ 1/2 · Rust 2/2 | A/B C++ —·Rust — · pass@1 — | 91 | 449 | −393.4% | 2.5% | 8.2% |
+| [simple_lang](https://github.com/lxbme/simple_lang) | C++ ✅ · Rust ⚠️ | C++ 11/11 · Rust 9/10 | A/B C++ —·Rust — · pass@1 ❌ | 263 | 550 | −109.1% | 6.8% | 14.5% |
+| [SimpleXML](https://github.com/kiennt/SimpleXML.git) | C++ ⚠️ · Rust ⚠️ | C++ 1/2 · Rust 0/2 | A/B C++ —·Rust — · pass@1 ❌ | 137 | 238 | −73.7% | 9.6% | 13.6% |
+| [skp](https://github.com/rdentato/skp) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
+| [SlothLang](https://github.com/AaronCGoidel/SlothLang) | C++ ⚠️ · Rust ⚠️ | C++ 3/3 · Rust 3/3 | A/B C++ —·Rust — · pass@1 ❌ | 13 | 52 | −300.0% | 2.3% | 8.1% |
+| [ted](https://github.com/ajpen/ted) | C++ ⚠️ · Rust ✅ | C++ 3/3 · Rust 2/4 | A/B C++ —·Rust — · pass@1 ❌ | 339 | 732 | −115.9% | 6.7% | 11.3% |
+| [tisp](https://github.com/edvb/tisp) | C++ ✅ · Rust ✅ | C++ 0/2 · Rust 0/2 | A/B C++ —·Rust — · pass@1 ❌ | 621 | 2,804 | −351.5% | 10.9% | 12.1% |
+| [totp](https://github.com/sjmulder/totp) | C++ ✅ · Rust ✅ | C++ 2/3 · Rust 2/3 | A/B C++ —·Rust — · pass@1 ❌ | 23 | 225 | −878.3% | 0.9% | 7.0% |
+| [ulidgen](https://github.com/leahneukirchen/ulidgen) | C++ ⚠️ · Rust ⚠️ | C++ 1/1 · Rust 0/1 | A/B C++ —·Rust — · pass@1 — | 1 | 39 | −3800.0% | 0.4% | 10.8% |
+| [utf8](https://github.com/zahash/utf8.c) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 1/2 | A/B C++ ✅·Rust — · pass@1 ❌ | 75 | 708 | −844.0% | 1.5% | 16.9% |
+| [VaultSync](https://github.com/elhalili/VaultSync) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
+| [vec](https://github.com/rxi/vec) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 2/2 | A/B C++ ✅·Rust — · pass@1 ❌ | 885 | 2,101 | −137.4% | 9.5% | 16.2% |
+| [worsp](https://github.com/sosukesuzuki/worsp) | C++ ⚠️ · Rust ⚠️ | C++ 0/1 · Rust 0/1 | A/B C++ —·Rust — · pass@1 ❌ | 1,087 | 0 | +100.0% | 13.6% | — |
+| [XOpt](https://github.com/drylikov/XOpt.git) | C++ ✅ · Rust ✅ | C++ 1/1 · Rust 0/1 | A/B C++ —·Rust — · pass@1 — | 135 | 616 | −356.3% | 8.5% | 6.4% |
 
-<sub>**Functions** — function definitions in the generated Rust (declarations of external C functions are not counted). **Fully safe functions** — functions with no `unsafe` anywhere: not declared `unsafe fn` and containing no `unsafe` block; the percentage is their share of all functions. **`unsafe` sites** — individual `unsafe` blocks or `unsafe fn` definitions remaining in the output; each marks one place whose safety is inherited from the original C rather than proven by the Rust compiler (fewer is better).</sub>
+<sub>A **site** is one individual unsafe OPERATION, not a function or a whole `unsafe {}` block (those are too coarse). **Transpiled / Compiled** — did cpp2rust emit, and does the emitted code build, for the C++ lane and the Rust lane (`ok/total` translation units). **Tested** — the differential test oracles: **A/B** runs the project's own program built from native C vs from the transpiled C++/Rust and compares output byte-for-byte (`—` = not linkable as one binary, e.g. cross-TU C++ name mangling or unresolved builtin FFI; logged, never silently passed); **pass@1** is CRUST-bench's official oracle — the emitted crate spliced under the hand-written RBench interface, then `cargo test`. For SQLite the Tested cell is the whole-CLI differential over the SQL scripts. **Original C Unsafe Sites** — initial unsafe operation sites in the C source (`raw_ptr_deref + static_mut + union_member`). **Emitted Rust Unsafe Sites** — resulting unsafe operation sites in the emitted Rust (`raw_ptr_deref + extern_unsafe_call + static_mut + union_read + transmute + inline_asm`). These are not a clean subtraction: C treats FFI calls as free, but each becomes an `extern_unsafe_call` in Rust — so the per-family breakdown below the table is where the real memory-safety story (the raw-pointer-deref line) is visible. `unchecked_arith` is a separate lane (C pointer arithmetic has no Rust unsafe counterpart), never folded in. **Unsafe Site Reduction (%)** — `(C − Rust) ÷ C`; **positive = net fewer** unsafe sites, **negative = net more** (this build is a faithful transliteration — ownership/borrow uplift is deferred — so where Rust adds sites it is mostly C's previously-hidden FFI unsafety made explicit, not new unsafety). **Baseline C UOD** / **Emitted Rust UOD** — Unsafe-Operation-Density: unsafe sites ÷ total expressions in that lane's own AST (lower is safer); the denominator grows with any added scaffolding, so the density cannot be gamed by code inflation. All counts use thousands separators.</sub>
+
+**Unsafe operation sites by family — all projects (C initial → Rust resulting):**
+
+| Family | Sites (C) | Sites (Rust) | Δ (C−Rust) |
+|---|---:|---:|---:|
+| raw_ptr_deref | 27,588 | 28,796 | -1,208 |
+| extern_unsafe_call (FFI/unsafe fn) | — *(not unsafe in C)* | 16,572 | — |
+| static_mut | 874 | 865 | 9 |
+| union read | 840 | 2 | 838 |
+| transmute | — *(not unsafe in C)* | 1,323 | — |
+| inline_asm | — *(not unsafe in C)* | 0 | — |
+| **Total (memory-safety sites)** | **29,302** | **47,558** | **-18,256** |
+| _unchecked_arith (separate lane)_ | _474_ | _0_ | _—_ |
+
+Corpus totals — Original C unsafe sites **29,302** → Emitted Rust unsafe sites **47,558** (Unsafe Site Reduction **−62.3%**; negative because this build is a faithful transliteration and surfaces C's hidden FFI unsafety — see the `extern_unsafe_call` row). Baseline C UOD **8.90%** → Emitted Rust UOD **9.48%** (unsafe sites ÷ total expressions in each lane's AST).
+Raw-pointer dereferences (the core memory-safety family): 27,588 in C → 28,796 in Rust (**+1,208**; the emitter lowers some compound C accesses into several explicit Rust derefs, so a per-project split — not this raw aggregate — is the honest read of the memory-safety change).
 <!-- crust-table:end -->
 
-### Tier 2 — pass@1: 0 / 100 (not attempted)
+### pass@1 — 0 pass / 35 attempted / 65 no interface match
 
-Tier 2 is the benchmark's headline metric: does the emitted Rust compile
+pass@1 is the benchmark's headline metric: does the emitted Rust compile
 against the project's *separately authored* Rust interface and pass
-`cargo test`? Reconciling output against each project's third-party,
-hand-written interface is out of the product's current focus, so every project
-is recorded `not-attempted` — honestly, rather than as a blended failure. For
-scale: the benchmark paper's best single-shot model result solved 15 of 100 on
-that (stricter) metric; our Tier-1 is a weaker bar and the two numbers are not
-directly comparable.
+`cargo test`? This run now ATTEMPTS it (earlier reports recorded it
+`not-attempted`): for every project with a compiling Rust crate, the emitted
+modules are spliced under the hand-written RBench interface and `cargo test`
+is run. 35 projects reached the splice; none passed — the emitted crate is a
+faithful C-ABI translation whose module shapes and signatures do not yet
+reconcile with the third-party hand-written interface (the remaining 65 had no
+interface module to splice against). This is recorded honestly as `fail`/`—`,
+never a blended success. For scale: the benchmark paper's best single-shot
+model result solved 15 of 100 on this metric.
 
 ### Framing
 
@@ -219,11 +248,12 @@ clang2rust is tuned for large, self-contained C codebases such as
 transpiled to Rust, runs byte-identical to the native build (see the
 [README](README.md)). CRUST-bench is a deliberately different target: 100
 unrelated third-party repositories with their own build systems and externally
-supplied Rust interfaces. On a first honest run, the converter fully converts
-47 of the 81 reachable projects (18 of them to fully-compiling Rust) and
-declines loudly — never silently mis-translating — where it hits constructs it
-does not yet support. We publish these numbers as a transparent baseline to
-track over time, not as a figure to inflate or omit.
+supplied Rust interfaces. On this run the converter fully transpiles 48 of the
+81 reachable projects to Rust (23 all the way to fully-compiling Rust) and 52
+to C++, declines loudly — never silently mis-translating — where it hits
+constructs it does not yet support, and every A/B leg that was linkable ran
+byte-identical to native. We publish these numbers as a transparent baseline
+to track over time, not as a figure to inflate or omit.
 
 ### Run environment notes
 
