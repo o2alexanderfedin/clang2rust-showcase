@@ -306,7 +306,10 @@ NATIVE_BIN=""
 nb="$(build_native)" && NATIVE_BIN="$nb" || { ROW[ab_note]="native:${nb}"; log "native A/B baseline unavailable: $nb"; }
 
 if [ -n "$NATIVE_BIN" ] && [ -x "$NATIVE_BIN" ]; then
-  run_bounded "$AB_TIMEOUT" "$NATIVE_BIN" >"${OUT}/native.out" 2>"${OUT}/native.err"; ncode=$?
+  # Run each program from a scratch dir so any side-effect files it writes
+  # (e.g. a test that dumps `foo.out`) land there, never in the caller's CWD.
+  ABRUN="${OUT}/abrun"; mkdir -p "$ABRUN"
+  ( cd "$ABRUN" && run_bounded "$AB_TIMEOUT" "$NATIVE_BIN" ) >"${OUT}/native.out" 2>"${OUT}/native.err"; ncode=$?
   normalize <"${OUT}/native.out" >"${OUT}/native.out.n"
   normalize <"${OUT}/native.err" >"${OUT}/native.err.n"
 
@@ -315,7 +318,7 @@ if [ -n "$NATIVE_BIN" ] && [ -x "$NATIVE_BIN" ]; then
     objs=(); for f in "${CPP_FILES[@]}"; do [ -f "$f.o" ] && objs+=("$f.o"); done
     if run_bounded "$COMPILE_TIMEOUT" "$CXX" -std=c++26 -stdlib=libc++ "${objs[@]}" \
          -o "${OUT}/transpiled_cpp.bin" >>"$LOG" 2>&1; then
-      run_bounded "$AB_TIMEOUT" "${OUT}/transpiled_cpp.bin" >"${OUT}/tcpp.out" 2>"${OUT}/tcpp.err"; tcode=$?
+      ( cd "$ABRUN" && run_bounded "$AB_TIMEOUT" "${OUT}/transpiled_cpp.bin" ) >"${OUT}/tcpp.out" 2>"${OUT}/tcpp.err"; tcode=$?
       normalize <"${OUT}/tcpp.out" >"${OUT}/tcpp.out.n"
       normalize <"${OUT}/tcpp.err" >"${OUT}/tcpp.err.n"
       if [ "$ncode" -eq "$tcode" ] && diff -q "${OUT}/native.out.n" "${OUT}/tcpp.out.n" >/dev/null \
@@ -344,7 +347,7 @@ if [ -n "$NATIVE_BIN" ] && [ -x "$NATIVE_BIN" ]; then
     done
     if [ "$rok" -eq 1 ] && run_bounded "$COMPILE_TIMEOUT" "$CC" "${rlibs[@]}" \
          -o "${OUT}/transpiled_rust.bin" >>"$LOG" 2>&1; then
-      run_bounded "$AB_TIMEOUT" "${OUT}/transpiled_rust.bin" >"${OUT}/trust.out" 2>"${OUT}/trust.err"; rcode=$?
+      ( cd "$ABRUN" && run_bounded "$AB_TIMEOUT" "${OUT}/transpiled_rust.bin" ) >"${OUT}/trust.out" 2>"${OUT}/trust.err"; rcode=$?
       normalize <"${OUT}/trust.out" >"${OUT}/trust.out.n"
       normalize <"${OUT}/trust.err" >"${OUT}/trust.err.n"
       if [ "$ncode" -eq "$rcode" ] && diff -q "${OUT}/native.out.n" "${OUT}/trust.out.n" >/dev/null \
