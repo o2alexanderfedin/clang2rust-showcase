@@ -7,10 +7,14 @@ Usage:
         [--sqlite-status <tsv>] [--sqlite-sites <tsv>] [--update <RESULTS.md>]
 
 Both the CRUST-bench table and the SQLite flagship row use ONE UNIFIED column
-schema (DESIGN.md D3 + the "SQLite must be first-class + comparable" ruling):
+schema (DESIGN.md D3 + the "SQLite must be first-class + comparable" ruling) —
+the original state columns, then the Multi-Dimensional Safety Matrix:
 
-    | Project | Transpiled | Compiled | A/B (native vs transpiled) | pass@1
-    | Unsafe sites (C) | Unsafe sites (Rust) | Sites lifted | UOD (Rust) |
+    | Project | Transpiled | Compiled | Tested
+    | Original C Unsafe Sites | Emitted Rust Unsafe Sites
+    | Unsafe Site Reduction (%) | Baseline C UOD | Emitted Rust UOD |
+
+SQLite is also the first row of the per-project table (labeled "flagship").
 
 Safety is measured in per-OPERATION SITES, not functions (functions are too
 coarse). The numbers come from the census/funnel instruments, NOT a regex:
@@ -256,6 +260,14 @@ def aggregate_block(rows):
         f"`extern_unsafe_call` row). Baseline C UOD **{c_uod}** → Emitted Rust "
         f"UOD **{r_uod}** (unsafe sites ÷ total expressions in each lane's AST).",
         deref_line,
+        "Caveat — measurement scope: the C funnel is main-file-scoped (a "
+        "deliberate choice so system-header noise is excluded) while the Rust "
+        "census counts the `#include`d project code the emitter inlines. Projects "
+        "that `#include` a generated `.c` therefore skew both their own reduction "
+        "and their weight here — notably **libfor** (55 C sites vs 14,698 Rust, "
+        "because its 28K-line `for-gen.c` is inlined and fully unrolled); it alone "
+        "is roughly half the corpus `raw_ptr_deref` total. Read the per-project "
+        "rows, not just this aggregate.",
     ]
     return "\n".join(l for l in lines if l is not None)
 

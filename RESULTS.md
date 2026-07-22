@@ -225,6 +225,7 @@ C→Rust before/after breakdown follows it.
 
 Corpus totals — Original C unsafe sites **29,302** → Emitted Rust unsafe sites **47,558** (Unsafe Site Reduction **−62.3%**; negative because this build is a faithful transliteration and surfaces C's hidden FFI unsafety — see the `extern_unsafe_call` row). Baseline C UOD **8.90%** → Emitted Rust UOD **9.48%** (unsafe sites ÷ total expressions in each lane's AST).
 Raw-pointer dereferences (the core memory-safety family): 27,588 in C → 28,796 in Rust (**+1,208**; the emitter lowers some compound C accesses into several explicit Rust derefs, so a per-project split — not this raw aggregate — is the honest read of the memory-safety change).
+Caveat — measurement scope: the C funnel is main-file-scoped (a deliberate choice so system-header noise is excluded) while the Rust census counts the `#include`d project code the emitter inlines. Projects that `#include` a generated `.c` therefore skew both their own reduction and their weight here — notably **libfor** (55 C sites vs 14,698 Rust, because its 28K-line `for-gen.c` is inlined and fully unrolled); it alone is roughly half the corpus `raw_ptr_deref` total. Read the per-project rows, not just this aggregate.
 <!-- crust-table:end -->
 
 ### pass@1 — 0 pass / 35 attempted / 65 no interface match
