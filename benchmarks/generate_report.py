@@ -247,9 +247,13 @@ def load_rows(results_dir):
     return rows
 
 
-def render_crust(results_dir, cbench_dir):
+def render_crust(results_dir, cbench_dir, sqlite_status=None, sqlite_sites=None):
     rows = load_rows(results_dir)
     lines = list(HEADER)
+    # SQLite sits IN the per-project table as the first row (the flagship — the
+    # product's primary target — shown right alongside the CRUST-bench corpus).
+    if sqlite_status and os.path.isfile(sqlite_status):
+        lines.append(sqlite_row(sqlite_status, sqlite_sites, label_suffix=" — **flagship**"))
     for project, r in rows:
         t, c, ab, p1 = state_cells(r)
         cs, rs, lifted, uod = site_cells(r)
@@ -300,23 +304,29 @@ def sqlite_state_cells(status_row):
     return transpiled, compiled, ab
 
 
-def render_sqlite(status_path, sites_path):
+def sqlite_row(status_path, sites_path, label_suffix=""):
+    """The single `| … |` SQLite markdown row — reused by the flagship table AND
+    prepended as the first row of the per-project table (so SQLite sits IN the
+    table alongside the CRUST-bench projects, not only in its own section)."""
     status_row = parse_kv(status_path)
     name = status_row.get("name", "SQLite")
     cell = f"[{name}]({status_row['url']})" if status_row.get("url") else name
     if status_row.get("output_url"):
         cell += f" → [Rust output]({status_row['output_url']})"
+    cell += label_suffix
     t, c, ab = sqlite_state_cells(status_row)
-
     if sites_path and os.path.isfile(sites_path):
-        sites_row = parse_kv(sites_path)
-        cs, rs, lifted, uod = site_cells(sites_row)
+        cs, rs, lifted, uod = site_cells(parse_kv(sites_path))
     else:
         # Never render stale function-granular numbers — mark honestly pending.
         cs = rs = lifted = uod = "`pending-regen`"
+    return f"| {cell} | {t} | {c} | {ab} | — | {cs} | {rs} | {lifted} | {uod} |"
 
+
+def render_sqlite(status_path, sites_path):
+    status_row = parse_kv(status_path)
     lines = list(HEADER)
-    lines.append(f"| {cell} | {t} | {c} | {ab} | — | {cs} | {rs} | {lifted} | {uod} |")
+    lines.append(sqlite_row(status_path, sites_path))
     lines.append("")
     lines.append(LEGEND)
     if not (sites_path and os.path.isfile(sites_path)):
@@ -367,7 +377,8 @@ def main():
     tables = []
     if args and os.path.isdir(args[0]):
         cbench_dir = args[1] if len(args) > 1 and os.path.isdir(args[1]) else None
-        tables.append((CRUST_BEGIN, CRUST_END, render_crust(args[0], cbench_dir)))
+        tables.append((CRUST_BEGIN, CRUST_END,
+                       render_crust(args[0], cbench_dir, sqlite_status, sqlite_sites)))
     if sqlite_status:
         if not os.path.isfile(sqlite_status):
             print("bad --sqlite-status path", file=sys.stderr)

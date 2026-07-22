@@ -102,6 +102,7 @@ C→Rust before/after breakdown follows it.
 <!-- crust-table:begin -->
 | Project | Transpiled | Compiled | A/B (native vs transpiled) | pass@1 | Unsafe sites (C) | Unsafe sites (Rust) | Sites lifted | UOD (Rust) |
 |---|---|---|---|---|---:|---:|---:|---:|
+| [SQLite](https://www.sqlite.org/) → [Rust output](https://github.com/o2alexanderfedin/sqlite-rust-mirror) — **flagship** | ✅ all 281 files | ✅ all 281 crates | ✅ all 10 SQL scripts byte-identical vs native CLI (3 runs) | — | `pending-regen` | `pending-regen` | `pending-regen` | `pending-regen` |
 | [2DPartInt](https://github.com/eafit-apolo/2DPartInt) | n/a — project build broken | — | — | — | 0 | 0 | 0 | — |
 | [42-Kocaeli-Printf](https://github.com/enes2424/42-Kocaeli-Printf) | C++ ❌ · Rust ❌ | C++ 0/0 · Rust 0/0 | C++ — · Rust — | — | 0 | 0 | 0 | — |
 | [aes128-SIMD](https://github.com/at0m741/aes128-SIMD) | C++ ❌ · Rust ❌ | C++ 0/0 · Rust 0/0 | C++ — · Rust — | — | 0 | 0 | 0 | — |
