@@ -54,9 +54,9 @@ SQLITE_BEGIN = "<!-- sqlite-table:begin -->"
 SQLITE_END = "<!-- sqlite-table:end -->"
 
 HEADER = [
-    "| Project | Transpiled | Compiled | A/B (native vs transpiled) | pass@1 "
+    "| Project | Transpiled | Compiled | Tested "
     "| Unsafe sites (C) | Unsafe sites (Rust) | Sites lifted | UOD (Rust) |",
-    "|---|---|---|---|---|---:|---:|---:|---:|",
+    "|---|---|---|---|---:|---:|---:|---:|",
 ]
 
 # One legend rendered under BOTH tables so every number is defined in place.
@@ -65,12 +65,13 @@ LEGEND = (
     "whole `unsafe {}` block (those are too coarse). "
     "**Transpiled / Compiled** — did cpp2rust emit, and does the emitted code "
     "build, for the C++ lane and the Rust lane (`ok/total` translation units). "
-    "**A/B** — the project's own program built from native C vs from the "
-    "transpiled C++/Rust, run and compared byte-for-byte (`—` = not linkable "
-    "as one binary, e.g. cross-TU C++ name mangling or unresolved builtin FFI; "
-    "logged, never silently passed). **pass@1** — CRUST-bench's official oracle: "
-    "the emitted crate spliced under the hand-written RBench interface, then "
-    "`cargo test`. "
+    "**Tested** — the differential test oracles: **A/B** runs the project's own "
+    "program built from native C vs from the transpiled C++/Rust and compares "
+    "output byte-for-byte (`—` = not linkable as one binary, e.g. cross-TU C++ "
+    "name mangling or unresolved builtin FFI; logged, never silently passed); "
+    "**pass@1** is CRUST-bench's official oracle — the emitted crate spliced "
+    "under the hand-written RBench interface, then `cargo test`. For SQLite the "
+    "Tested cell is the whole-CLI differential over the SQL scripts. "
     "**Unsafe sites (C)** — initial unsafe operation sites in the C source "
     "(`raw_ptr_deref + static_mut + union_member`). **Unsafe sites (Rust)** — "
     "resulting unsafe operation sites in the emitted Rust "
@@ -157,16 +158,18 @@ def _ab_icon(state):
 
 
 def state_cells(r):
-    """(transpiled, compiled, ab, pass1) cells from a driver row."""
+    """(transpiled, compiled, tested) cells from a driver row. `tested`
+    combines both differential oracles (A/B + pass@1) into the single Tested
+    column."""
     note = r.get("note", "")
     if "no-compile-commands" in note or "no-project-dir" in note:
-        return ("n/a — project build broken", "—", "—", "—")
+        return ("n/a — project build broken", "—", "—")
     transpiled = (f"C++ {_lane_icon(r.get('transpiled_cpp'))} · "
                   f"Rust {_lane_icon(r.get('transpiled_rust'))}")
     compiled = f"C++ {r.get('compiled_cpp','?')} · Rust {r.get('compiled_rust','?')}"
-    ab = f"C++ {_ab_icon(r.get('ab_cpp'))} · Rust {_ab_icon(r.get('ab_rust'))}"
-    pass1 = _ab_icon(r.get("pass1"))
-    return (transpiled, compiled, ab, pass1)
+    tested = (f"A/B C++ {_ab_icon(r.get('ab_cpp'))}·Rust {_ab_icon(r.get('ab_rust'))} "
+              f"· pass@1 {_ab_icon(r.get('pass1'))}")
+    return (transpiled, compiled, tested)
 
 
 def site_cells(r):
@@ -255,11 +258,11 @@ def render_crust(results_dir, cbench_dir, sqlite_status=None, sqlite_sites=None)
     if sqlite_status and os.path.isfile(sqlite_status):
         lines.append(sqlite_row(sqlite_status, sqlite_sites, label_suffix=" — **flagship**"))
     for project, r in rows:
-        t, c, ab, p1 = state_cells(r)
+        t, c, tested = state_cells(r)
         cs, rs, lifted, uod = site_cells(r)
         url = upstream_url(cbench_dir, project)
         cell = f"[{project}]({url})" if url else project
-        lines.append(f"| {cell} | {t} | {c} | {ab} | {p1} | {cs} | {rs} | {lifted} | {uod} |")
+        lines.append(f"| {cell} | {t} | {c} | {tested} | {cs} | {rs} | {lifted} | {uod} |")
     lines.append("")
     lines.append(LEGEND)
     lines.append(aggregate_block([r for _, r in rows]))
@@ -314,13 +317,13 @@ def sqlite_row(status_path, sites_path, label_suffix=""):
     if status_row.get("output_url"):
         cell += f" → [Rust output]({status_row['output_url']})"
     cell += label_suffix
-    t, c, ab = sqlite_state_cells(status_row)
+    t, c, tested = sqlite_state_cells(status_row)
     if sites_path and os.path.isfile(sites_path):
         cs, rs, lifted, uod = site_cells(parse_kv(sites_path))
     else:
         # Never render stale function-granular numbers — mark honestly pending.
         cs = rs = lifted = uod = "`pending-regen`"
-    return f"| {cell} | {t} | {c} | {ab} | — | {cs} | {rs} | {lifted} | {uod} |"
+    return f"| {cell} | {t} | {c} | {tested} | {cs} | {rs} | {lifted} | {uod} |"
 
 
 def render_sqlite(status_path, sites_path):
