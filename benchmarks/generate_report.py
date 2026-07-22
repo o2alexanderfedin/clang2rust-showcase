@@ -55,8 +55,9 @@ SQLITE_END = "<!-- sqlite-table:end -->"
 
 HEADER = [
     "| Project | Transpiled | Compiled | Tested "
-    "| Unsafe sites (C) | Unsafe sites (Rust) | Sites lifted | UOD (Rust) |",
-    "|---|---|---|---|---:|---:|---:|---:|",
+    "| Original C Unsafe Sites | Emitted Rust Unsafe Sites "
+    "| Unsafe Site Reduction (%) | Baseline C UOD | Emitted Rust UOD |",
+    "|---|---|---|---|---:|---:|---:|---:|---:|",
 ]
 
 # One legend rendered under BOTH tables so every number is defined in place.
@@ -72,21 +73,24 @@ LEGEND = (
     "**pass@1** is CRUST-bench's official oracle — the emitted crate spliced "
     "under the hand-written RBench interface, then `cargo test`. For SQLite the "
     "Tested cell is the whole-CLI differential over the SQL scripts. "
-    "**Unsafe sites (C)** — initial unsafe operation sites in the C source "
-    "(`raw_ptr_deref + static_mut + union_member`). **Unsafe sites (Rust)** — "
-    "resulting unsafe operation sites in the emitted Rust "
+    "**Original C Unsafe Sites** — initial unsafe operation sites in the C "
+    "source (`raw_ptr_deref + static_mut + union_member`). **Emitted Rust "
+    "Unsafe Sites** — resulting unsafe operation sites in the emitted Rust "
     "(`raw_ptr_deref + extern_unsafe_call + static_mut + union_read + transmute "
-    "+ inline_asm`). Note the two are not a clean subtraction: C treats FFI "
-    "calls as free, but each becomes an `extern_unsafe_call` in Rust — so the "
+    "+ inline_asm`). These are not a clean subtraction: C treats FFI calls as "
+    "free, but each becomes an `extern_unsafe_call` in Rust — so the "
     "per-family breakdown below the table is where the real memory-safety story "
-    "(the raw-pointer-deref drop) is visible. `unchecked_arith` is reported in "
-    "its own lane (C pointer arithmetic has no Rust unsafe counterpart), never "
-    "folded into these totals. "
-    "**Sites lifted** — `C − Rust` (positive = net fewer unsafe sites). "
-    "**UOD (Rust)** — Unsafe-Operation-Density: Rust sites ÷ total emitted Rust "
-    "expressions; a density (lower is safer) whose denominator grows with any "
-    "added safe scaffolding, so it cannot be gamed by code inflation. All "
-    "counts use thousands separators.</sub>"
+    "(the raw-pointer-deref line) is visible. `unchecked_arith` is a separate "
+    "lane (C pointer arithmetic has no Rust unsafe counterpart), never folded "
+    "in. **Unsafe Site Reduction (%)** — `(C − Rust) ÷ C`; **positive = net "
+    "fewer** unsafe sites, **negative = net more** (this build is a faithful "
+    "transliteration — ownership/borrow uplift is deferred — so where Rust adds "
+    "sites it is mostly C's previously-hidden FFI unsafety made explicit, not "
+    "new unsafety). **Baseline C UOD** / **Emitted Rust UOD** — Unsafe-"
+    "Operation-Density: unsafe sites ÷ total expressions in that lane's own AST "
+    "(lower is safer); the denominator grows with any added scaffolding, so the "
+    "density cannot be gamed by code inflation. All counts use thousands "
+    "separators.</sub>"
 )
 
 # --- driver TSV site-family keys -------------------------------------------
@@ -172,19 +176,31 @@ def state_cells(r):
     return (transpiled, compiled, tested)
 
 
+def pct(num, den, signed=False):
+    """Percentage cell, or '—' when the denominator is zero. `signed` prefixes
+    a leading + / − so a NEGATIVE reduction (Rust has more sites than C) reads
+    honestly as an increase rather than being mistaken for a small reduction."""
+    if not den:
+        return "—"
+    v = 100.0 * num / den
+    if signed:
+        sign = "+" if v > 0 else ("−" if v < 0 else "")
+        return f"{sign}{abs(v):.1f}%"
+    return f"{v:.1f}%"
+
+
 def site_cells(r):
-    """(c_sites, r_sites, lifted, uod) cells from any row carrying site keys.
-    Returns placeholders when the row has no site data at all."""
+    """The 5 Multi-Dimensional Safety Matrix cells from any row carrying site
+    keys: (Original C sites, Emitted Rust sites, Reduction %, Baseline C UOD,
+    Emitted Rust UOD). Placeholders when the row has no site data."""
     if "c_sites" not in r and "r_sites" not in r:
-        return ("—", "—", "—", "—")
+        return ("—", "—", "—", "—", "—")
     c = gi(r, "c_sites")
     rs = gi(r, "r_sites")
-    exprs = gi(r, "rust_exprs")
-    lifted = c - rs
-    lifted_cell = ("0" if lifted == 0
-                   else (f"+{fmt_n(lifted)}" if lifted > 0 else f"−{fmt_n(-lifted)}"))
-    uod = f"{100.0 * rs / exprs:.1f}%" if exprs else "—"
-    return (fmt_n(c), fmt_n(rs), lifted_cell, uod)
+    c_exprs = gi(r, "c_total_exprs")
+    r_exprs = gi(r, "rust_exprs")
+    reduction = pct(c - rs, c, signed=True) if c else "—"
+    return (fmt_n(c), fmt_n(rs), reduction, pct(c, c_exprs), pct(rs, r_exprs))
 
 
 # ---------------------------------------------------------------------------
@@ -209,8 +225,11 @@ def aggregate_block(rows):
     # unchecked_arith — separate lane, reported but never folded in.
     lines.append(f"| _unchecked_arith (separate lane)_ | _{fmt_n(tot('c_unchecked_arith'))}_ | "
                  f"_{fmt_n(tot('r_unchecked_arith'))}_ | _—_ |")
-    exprs = tot("rust_exprs")
-    uod = f"{100.0 * r_total / exprs:.2f}%" if exprs else "n/a"
+    c_exprs = tot("c_total_exprs")
+    r_exprs = tot("rust_exprs")
+    c_uod = f"{100.0 * c_total / c_exprs:.2f}%" if c_exprs else "n/a"
+    r_uod = f"{100.0 * r_total / r_exprs:.2f}%" if r_exprs else "n/a"
+    reduction = pct(c_total - r_total, c_total, signed=True) if c_total else "n/a"
     # "N of M sites now safe" framing for the raw-pointer-deref memory story.
     c_deref = tot("c_raw_ptr_deref")
     r_deref = tot("r_raw_ptr_deref")
@@ -230,10 +249,13 @@ def aggregate_block(rows):
         deref_line = ""
     lines += [
         "",
+        f"Corpus totals — Original C unsafe sites **{fmt_n(c_total)}** → Emitted "
+        f"Rust unsafe sites **{fmt_n(r_total)}** (Unsafe Site Reduction "
+        f"**{reduction}**; negative because this build is a faithful "
+        f"transliteration and surfaces C's hidden FFI unsafety — see the "
+        f"`extern_unsafe_call` row). Baseline C UOD **{c_uod}** → Emitted Rust "
+        f"UOD **{r_uod}** (unsafe sites ÷ total expressions in each lane's AST).",
         deref_line,
-        f"Unsafe-Operation-Density (Rust): **{fmt_n(r_total)} sites ÷ "
-        f"{fmt_n(exprs)} expressions = {uod}** (lower is safer; the denominator "
-        f"is total emitted expressions, so safety scaffolding cannot game it).",
     ]
     return "\n".join(l for l in lines if l is not None)
 
@@ -259,10 +281,11 @@ def render_crust(results_dir, cbench_dir, sqlite_status=None, sqlite_sites=None)
         lines.append(sqlite_row(sqlite_status, sqlite_sites, label_suffix=" — **flagship**"))
     for project, r in rows:
         t, c, tested = state_cells(r)
-        cs, rs, lifted, uod = site_cells(r)
+        cs, rs, red, cuod, ruod = site_cells(r)
         url = upstream_url(cbench_dir, project)
         cell = f"[{project}]({url})" if url else project
-        lines.append(f"| {cell} | {t} | {c} | {tested} | {cs} | {rs} | {lifted} | {uod} |")
+        lines.append(
+            f"| {cell} | {t} | {c} | {tested} | {cs} | {rs} | {red} | {cuod} | {ruod} |")
     lines.append("")
     lines.append(LEGEND)
     lines.append(aggregate_block([r for _, r in rows]))
@@ -319,11 +342,11 @@ def sqlite_row(status_path, sites_path, label_suffix=""):
     cell += label_suffix
     t, c, tested = sqlite_state_cells(status_row)
     if sites_path and os.path.isfile(sites_path):
-        cs, rs, lifted, uod = site_cells(parse_kv(sites_path))
+        cs, rs, red, cuod, ruod = site_cells(parse_kv(sites_path))
     else:
         # Never render stale function-granular numbers — mark honestly pending.
-        cs = rs = lifted = uod = "`pending-regen`"
-    return f"| {cell} | {t} | {c} | {tested} | {cs} | {rs} | {lifted} | {uod} |"
+        cs = rs = red = cuod = ruod = "`pending-regen`"
+    return f"| {cell} | {t} | {c} | {tested} | {cs} | {rs} | {red} | {cuod} | {ruod} |"
 
 
 def render_sqlite(status_path, sites_path):

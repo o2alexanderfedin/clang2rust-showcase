@@ -107,7 +107,7 @@ ROW[compiled_rust]="0/0"
 ROW[ab_cpp]="na"; ROW[ab_rust]="na"; ROW[pass1]="na"
 ROW[ab_note]=""; ROW[pass1_note]=""
 ROW[c_raw_ptr_deref]=0; ROW[c_static_mut]=0; ROW[c_union_member]=0; ROW[c_unchecked_arith]=0
-ROW[c_sites]=0
+ROW[c_sites]=0; ROW[c_total_exprs]=0
 ROW[r_raw_ptr_deref]=0; ROW[r_extern_unsafe_call]=0; ROW[r_static_mut]=0; ROW[r_union_read]=0
 ROW[r_transmute]=0; ROW[r_inline_asm]=0; ROW[r_unchecked_arith]=0; ROW[r_unsafe_blocks]=0
 ROW[r_sites]=0; ROW[rust_exprs]=0
@@ -117,7 +117,7 @@ emit_row() {
   local out="" k
   for k in project tus transpiled_cpp cpp_crates compiled_cpp transpiled_rust rust_crates \
            compiled_rust ab_cpp ab_rust pass1 ab_note pass1_note \
-           c_raw_ptr_deref c_static_mut c_union_member c_unchecked_arith c_sites \
+           c_raw_ptr_deref c_static_mut c_union_member c_unchecked_arith c_sites c_total_exprs \
            r_raw_ptr_deref r_extern_unsafe_call r_static_mut r_union_read r_transmute \
            r_inline_asm r_unchecked_arith r_unsafe_blocks r_sites rust_exprs note; do
     out+="${k}=${ROW[$k]}"$'\t'
@@ -196,6 +196,7 @@ ROW[c_raw_ptr_deref]="$(sum_key "$FUNNEL_C" raw_ptr_deref)"
 ROW[c_static_mut]="$(sum_key "$FUNNEL_C" static_mut)"
 ROW[c_union_member]="$(sum_key "$FUNNEL_C" union_member)"
 ROW[c_unchecked_arith]="$(sum_key "$FUNNEL_C" unchecked_arith)"
+ROW[c_total_exprs]="$(sum_key "$FUNNEL_C" total_exprs)"
 # "unsafe sites" total EXCLUDES the separate unchecked_arith (pointer-arith) lane.
 ROW[c_sites]=$(( ROW[c_raw_ptr_deref] + ROW[c_static_mut] + ROW[c_union_member] ))
 log "C sites=${ROW[c_sites]} (deref=${ROW[c_raw_ptr_deref]} static=${ROW[c_static_mut]} union=${ROW[c_union_member]} arith=${ROW[c_unchecked_arith]})"
