@@ -45,10 +45,11 @@ def main():
     fc, fr = sys.argv[1], sys.argv[2]
 
     c = {k: sum_key(fc, k) for k in
-         ("raw_ptr_deref", "static_mut", "union_member", "unchecked_arith")}
+         ("raw_ptr_deref", "static_mut", "union_member", "unchecked_arith", "total_exprs")}
     r = {k: sum_key(fr, k) for k in
-         ("raw_ptr_deref", "extern_unsafe_call", "static_mut", "union_read",
-          "transmute", "inline_asm", "unchecked_arith", "unsafe_blocks", "total_exprs")}
+         ("raw_ptr_deref", "extern_unsafe_call", "first_party_call", "intrinsic_call",
+          "static_mut", "union_read", "transmute", "inline_asm", "unchecked_arith",
+          "unsafe_blocks", "total_exprs")}
 
     fields = {
         "project": "sqlite",
@@ -57,8 +58,11 @@ def main():
         "c_union_member": c["union_member"],
         "c_unchecked_arith": c["unchecked_arith"],
         "c_sites": c["raw_ptr_deref"] + c["static_mut"] + c["union_member"],
+        "c_total_exprs": c["total_exprs"],
         "r_raw_ptr_deref": r["raw_ptr_deref"],
         "r_extern_unsafe_call": r["extern_unsafe_call"],
+        "r_first_party_call": r["first_party_call"],
+        "r_intrinsic_call": r["intrinsic_call"],
         "r_static_mut": r["static_mut"],
         "r_union_read": r["union_read"],
         "r_transmute": r["transmute"],

@@ -108,7 +108,7 @@ ROW[ab_cpp]="na"; ROW[ab_rust]="na"; ROW[pass1]="na"
 ROW[ab_note]=""; ROW[pass1_note]=""
 ROW[c_raw_ptr_deref]=0; ROW[c_static_mut]=0; ROW[c_union_member]=0; ROW[c_unchecked_arith]=0
 ROW[c_sites]=0; ROW[c_total_exprs]=0
-ROW[r_raw_ptr_deref]=0; ROW[r_extern_unsafe_call]=0; ROW[r_internal_call]=0; ROW[r_static_mut]=0; ROW[r_union_read]=0
+ROW[r_raw_ptr_deref]=0; ROW[r_extern_unsafe_call]=0; ROW[r_first_party_call]=0; ROW[r_intrinsic_call]=0; ROW[r_static_mut]=0; ROW[r_union_read]=0
 ROW[r_transmute]=0; ROW[r_inline_asm]=0; ROW[r_unchecked_arith]=0; ROW[r_unsafe_blocks]=0
 ROW[r_sites]=0; ROW[rust_exprs]=0
 ROW[note]=""
@@ -118,7 +118,7 @@ emit_row() {
   for k in project tus transpiled_cpp cpp_crates compiled_cpp transpiled_rust rust_crates \
            compiled_rust ab_cpp ab_rust pass1 ab_note pass1_note \
            c_raw_ptr_deref c_static_mut c_union_member c_unchecked_arith c_sites c_total_exprs \
-           r_raw_ptr_deref r_extern_unsafe_call r_internal_call r_static_mut r_union_read r_transmute \
+           r_raw_ptr_deref r_extern_unsafe_call r_first_party_call r_intrinsic_call r_static_mut r_union_read r_transmute \
            r_inline_asm r_unchecked_arith r_unsafe_blocks r_sites rust_exprs note; do
     out+="${k}=${ROW[$k]}"$'\t'
   done
@@ -252,7 +252,8 @@ FUNNEL_R="${OUT}/funnel_rust.log"
 "$UNSAFE_CENSUS_BIN" "$RUST_OUT" >"$FUNNEL_R" 2>>"$LOG"
 ROW[r_raw_ptr_deref]="$(sum_key "$FUNNEL_R" raw_ptr_deref)"
 ROW[r_extern_unsafe_call]="$(sum_key "$FUNNEL_R" extern_unsafe_call)"
-ROW[r_internal_call]="$(sum_key "$FUNNEL_R" internal_call)"
+ROW[r_first_party_call]="$(sum_key "$FUNNEL_R" first_party_call)"
+ROW[r_intrinsic_call]="$(sum_key "$FUNNEL_R" intrinsic_call)"
 ROW[r_static_mut]="$(sum_key "$FUNNEL_R" static_mut)"
 ROW[r_union_read]="$(sum_key "$FUNNEL_R" union_read)"
 ROW[r_transmute]="$(sum_key "$FUNNEL_R" transmute)"

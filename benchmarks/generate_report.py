@@ -36,11 +36,10 @@ SQLite site data:       read from the `--sqlite-sites <tsv>` file — a single
                         site keys (c_raw_ptr_deref … r_sites rust_exprs). It is
                         produced from the SQLite funnel logs; regenerate with:
 
-    # (after the SQLite verification battery completes and 16-02 merges, off
-    #  the fixed develop tip — NOT run by this generator)
-    C=$CACHE/sqlite-bench/funnel_c.log        # cpp2rust --cdb $CDB --emit=funnel-ingest
-    R=$CACHE/sqlite-bench/funnel_rust.log     # unsafe_census $OUTROOT
-    python3 benchmarks/sqlite_sites_from_funnel.py "$C" "$R" \
+    # (NOT run by this generator — run over a stable SQLite snapshot)
+    python3 benchmarks/sqlite_c_funnel.py "$SQLITE_CDB" funnel_c.log --bin cpp2rust
+    unsafe_census "$SQLITE_RUST_MIRROR"                              > funnel_rust.log
+    python3 benchmarks/sqlite_sites_from_funnel.py funnel_c.log funnel_rust.log \
         > benchmarks/sqlite-sites.tsv
 
     If `--sqlite-sites` is absent, SQLite's site cells render `pending-regen`
@@ -81,7 +80,7 @@ LEGEND = (
     "source (`raw_ptr_deref + static_mut + union_member`). **Emitted Rust "
     "Unsafe Sites** — resulting unsafe operation sites in the emitted Rust "
     "(`raw_ptr_deref + extern_unsafe_call + static_mut + union_read + transmute "
-    "+ inline_asm`). `extern_unsafe_call` counts only GENUINELY external calls (libc / foreign symbols). A call whose target is defined elsewhere in the project - a first-party function reached over the C ABI only because the emitter emits one crate per translation unit and exposes symbols to the CRUST-bench harness - plus transpiler shims and benign compiler intrinsics (assert, branch hints, object-size) are emission artifacts, NOT unsafety carried over from the C source; they go to a separate `internal_call` lane never folded into the total. `unchecked_arith` (C pointer arithmetic, no Rust unsafe counterpart) is likewise separate. The per-family breakdown below shows every lane. "
+    "+ inline_asm`). `extern_unsafe_call` counts only GENUINELY external calls (libc / foreign symbols). A call whose target is defined elsewhere in the project - a first-party function reached over the C ABI only because the emitter emits one crate per translation unit and exposes symbols to the CRUST-bench harness - plus transpiler shims and benign compiler intrinsics (assert, branch hints, object-size) are emission artifacts, NOT unsafety carried over from the C source; they are split into two separate excluded lanes, `first_party_call` (cross-TU / harness-FFI / transpiler shims) and `intrinsic_call` (benign compiler intrinsics), neither ever folded into the total. `unchecked_arith` (C pointer arithmetic, no Rust unsafe counterpart) is likewise separate. The per-family breakdown below shows every lane. "
     "**Unsafe Site Reduction (%)** — `(C − Rust) ÷ C`; **positive = net "
     "fewer** unsafe sites, **negative = net more** (this build is a faithful "
     "transliteration — ownership/borrow uplift is deferred — so where Rust adds "
@@ -225,11 +224,13 @@ def aggregate_block(rows):
     # unchecked_arith — separate lane, reported but never folded in.
     lines.append(f"| _unchecked_arith (separate lane)_ | _{fmt_n(tot('c_unchecked_arith'))}_ | "
                  f"_{fmt_n(tot('r_unchecked_arith'))}_ | _—_ |")
-    # internal_call — first-party cross-TU / harness-FFI / benign compiler
-    # intrinsics; an emission artifact, NOT preserved-from-C unsafety, so it is
-    # reported for transparency but excluded from the Rust total above.
-    lines.append(f"| _internal_call (first-party / harness-FFI / intrinsics — excluded)_ | "
-                 f"_—_ | _{fmt_n(tot('r_internal_call'))}_ | _—_ |")
+    # Artifact lanes — reported for transparency, excluded from the Rust total:
+    #   first_party_call — cross-TU / harness-FFI / transpiler shims.
+    #   intrinsic_call   — benign compiler intrinsics (assert / hints / sizes).
+    lines.append(f"| _first_party_call (cross-TU / harness-FFI — excluded)_ | "
+                 f"_—_ | _{fmt_n(tot('r_first_party_call'))}_ | _—_ |")
+    lines.append(f"| _intrinsic_call (benign compiler intrinsics — excluded)_ | "
+                 f"_—_ | _{fmt_n(tot('r_intrinsic_call'))}_ | _—_ |")
     c_exprs = tot("c_total_exprs")
     r_exprs = tot("rust_exprs")
     c_uod = f"{100.0 * c_total / c_exprs:.2f}%" if c_exprs else "n/a"
@@ -378,12 +379,22 @@ def render_sqlite(status_path, sites_path):
             "columns above reflect the last verified run "
             f"({status_row.get('run_date', '?')}).</sub>")
     else:
-        rev = git_short_rev(os.path.dirname(sites_path) or ".")
-        at = f" @ `{rev}`" if rev else ""
+        sr = parse_kv(sites_path)
         lines.append("")
-        lines.append(f"<sub>SQLite site counts from the SQLite funnel logs{at}; "
-                     f"state facts recorded {status_row.get('run_date', '?')} in "
-                     "[`benchmarks/sqlite-status.tsv`](benchmarks/sqlite-status.tsv).</sub>")
+        lines.append(
+            "<sub>SQLite site counts are code-generated: `cpp2rust --emit=funnel-ingest` "
+            "over the 281-TU corpus for the C side, the operation-level `unsafe_census` over "
+            "the published Rust mirror for the Rust side, reduced by "
+            "[`benchmarks/sqlite_sites_from_funnel.py`](benchmarks/sqlite_sites_from_funnel.py) "
+            "into [`benchmarks/sqlite-sites.tsv`](benchmarks/sqlite-sites.tsv). "
+            f"A further **{fmt_n(gi(sr, 'r_first_party_call'))}** first-party cross-TU / "
+            f"harness-FFI calls and **{fmt_n(gi(sr, 'r_intrinsic_call'))}** benign intrinsics "
+            "are excluded from the Rust total (SQLite links 281 crates over the C ABI, so these "
+            "dominate). Cross-lane caveat: the C funnel is main-file-scoped while the census "
+            "counts every emitted function including SQLite's inlined internal headers, so the "
+            "two populations differ — read the **UOD** columns (density) rather than the raw "
+            "reduction % as the honest cross-lane measure. State facts recorded "
+            f"{status_row.get('run_date', '?')}.</sub>")
     return "\n".join(lines)
 
 
