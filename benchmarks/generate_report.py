@@ -205,9 +205,33 @@ def site_cells(r):
 # ---------------------------------------------------------------------------
 # Aggregate per-family before/after block (DESIGN.md D3)
 # ---------------------------------------------------------------------------
-def aggregate_block(rows):
+def _fully_transpiled_and_compiled(r):
+    """True iff BOTH lanes fully transpiled AND the Rust fully compiled — the
+    only fair apples-to-apples population. A project whose Rust never compiled
+    has a C site count but a near-zero (unparseable) Rust count, so summing it
+    into a corpus total is meaningless."""
+    if r.get("transpiled_rust") != "yes":
+        return False
+    cr = r.get("compiled_rust", "0/0")
+    try:
+        a, b = cr.split("/")
+        return int(b) > 0 and a == b
+    except ValueError:
+        return False
+
+
+def aggregate_block(all_rows):
+    # Aggregate ONLY over projects where both lanes fully transpiled and the
+    # Rust compiled — otherwise failed-transpilation projects (huge C count,
+    # ~0 Rust) dominate the sum and invent a bogus reduction. The per-project
+    # table above still shows all 100 rows honestly.
+    rows = [r for r in all_rows if _fully_transpiled_and_compiled(r)]
     tot = lambda k: sum(gi(r, k) for r in rows)
-    lines = ["", "**Unsafe operation sites by family — all projects (C initial → Rust resulting):**",
+    lines = ["",
+             f"**Unsafe operation sites by family — across the {len(rows)} projects "
+             "where both lanes fully transpiled and the Rust compiled** (the fair "
+             "apples-to-apples population; the other rows have a C count but little "
+             "or no compiling Rust, so a whole-corpus sum would be meaningless):",
              "", "| Family | Sites (C) | Sites (Rust) | Δ (C−Rust) |", "|---|---:|---:|---:|"]
     c_total = r_total = 0
     for label, ck, rk in FAMILY_ROWS:
@@ -253,23 +277,27 @@ def aggregate_block(rows):
                       f"read of the memory-safety change).")
     else:
         deref_line = ""
+    sign_note = ("fewer unsafe sites in the emitted Rust" if (c_total - r_total) > 0
+                 else "more unsafe sites in the emitted Rust — this build is a "
+                      "faithful transliteration (ownership uplift deferred) that "
+                      "surfaces C's hidden libc-FFI unsafety as explicit "
+                      "`extern_unsafe_call`s")
     lines += [
         "",
-        f"Corpus totals — Original C unsafe sites **{fmt_n(c_total)}** → Emitted "
-        f"Rust unsafe sites **{fmt_n(r_total)}** (Unsafe Site Reduction "
-        f"**{reduction}**; negative because this build is a faithful "
-        f"transliteration and surfaces C's hidden FFI unsafety — see the "
-        f"`extern_unsafe_call` row). Baseline C UOD **{c_uod}** → Emitted Rust "
-        f"UOD **{r_uod}** (unsafe sites ÷ total expressions in each lane's AST).",
+        f"Totals — Original C unsafe sites **{fmt_n(c_total)}** → Emitted Rust "
+        f"unsafe sites **{fmt_n(r_total)}** (Unsafe Site Reduction **{reduction}**: "
+        f"{sign_note}). Baseline C UOD **{c_uod}** → Emitted Rust UOD **{r_uod}** "
+        f"(unsafe sites ÷ total expressions in each lane's AST).",
         deref_line,
-        "Caveat — measurement scope: the C funnel is main-file-scoped (a "
-        "deliberate choice so system-header noise is excluded) while the Rust "
-        "census counts the `#include`d project code the emitter inlines. Projects "
-        "that `#include` a generated `.c` therefore skew both their own reduction "
-        "and their weight here — notably **libfor** (55 C sites vs 14,698 Rust, "
-        "because its 28K-line `for-gen.c` is inlined and fully unrolled); it alone "
-        "is roughly half the corpus `raw_ptr_deref` total. Read the per-project "
-        "rows, not just this aggregate.",
+        "Both lanes now count the same per-crate/per-TU function population "
+        "(the C funnel counts project `#include`d functions, matching the "
+        "emitter's per-crate materialisation), so the libfor-style scope outlier "
+        "is gone. Two known residual asymmetries: (1) the emitter synthesises "
+        "helper/accessor functions absent from the C source and duplicates them "
+        "per crate (e.g. SQLite's bit-field accessors appear ~99×), inflating the "
+        "Rust side; (2) genuine libc calls are free in C but explicit unsafe "
+        "calls in Rust. Both push the Rust total up honestly — read the per-family "
+        "split and the UOD columns, not a single number.",
     ]
     return "\n".join(l for l in lines if l is not None)
 
@@ -390,11 +418,13 @@ def render_sqlite(status_path, sites_path):
             f"A further **{fmt_n(gi(sr, 'r_first_party_call'))}** first-party cross-TU / "
             f"harness-FFI calls and **{fmt_n(gi(sr, 'r_intrinsic_call'))}** benign intrinsics "
             "are excluded from the Rust total (SQLite links 281 crates over the C ABI, so these "
-            "dominate). Cross-lane caveat: the C funnel is main-file-scoped while the census "
-            "counts every emitted function including SQLite's inlined internal headers, so the "
-            "two populations differ — read the **UOD** columns (density) rather than the raw "
-            "reduction % as the honest cross-lane measure. State facts recorded "
-            f"{status_row.get('run_date', '?')}.</sub>")
+            "dominate). The remaining C→Rust gap is genuine: SQLite's Rust has ~2.8× the "
+            "function count of its C source because the emitter synthesises bit-field accessor "
+            "and helper functions (absent from the C — they are inline bit-field access "
+            "expressions there) and duplicates them into every crate (e.g. `via_coroutine` "
+            "appears ~99×), plus every libc call is an explicit `extern_unsafe_call`. Both push "
+            "the Rust total up honestly; the **UOD** columns (density, 6.5% → 7.7%) are the "
+            f"cleaner cross-lane measure. State facts recorded {status_row.get('run_date', '?')}.</sub>")
     return "\n".join(lines)
 
 
