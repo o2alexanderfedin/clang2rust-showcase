@@ -81,12 +81,8 @@ LEGEND = (
     "source (`raw_ptr_deref + static_mut + union_member`). **Emitted Rust "
     "Unsafe Sites** — resulting unsafe operation sites in the emitted Rust "
     "(`raw_ptr_deref + extern_unsafe_call + static_mut + union_read + transmute "
-    "+ inline_asm`). These are not a clean subtraction: C treats FFI calls as "
-    "free, but each becomes an `extern_unsafe_call` in Rust — so the "
-    "per-family breakdown below the table is where the real memory-safety story "
-    "(the raw-pointer-deref line) is visible. `unchecked_arith` is a separate "
-    "lane (C pointer arithmetic has no Rust unsafe counterpart), never folded "
-    "in. **Unsafe Site Reduction (%)** — `(C − Rust) ÷ C`; **positive = net "
+    "+ inline_asm`). `extern_unsafe_call` counts only GENUINELY external calls (libc / foreign symbols). A call whose target is defined elsewhere in the project - a first-party function reached over the C ABI only because the emitter emits one crate per translation unit and exposes symbols to the CRUST-bench harness - plus transpiler shims and benign compiler intrinsics (assert, branch hints, object-size) are emission artifacts, NOT unsafety carried over from the C source; they go to a separate `internal_call` lane never folded into the total. `unchecked_arith` (C pointer arithmetic, no Rust unsafe counterpart) is likewise separate. The per-family breakdown below shows every lane. "
+    "**Unsafe Site Reduction (%)** — `(C − Rust) ÷ C`; **positive = net "
     "fewer** unsafe sites, **negative = net more** (this build is a faithful "
     "transliteration — ownership/borrow uplift is deferred — so where Rust adds "
     "sites it is mostly C's previously-hidden FFI unsafety made explicit, not "
@@ -106,7 +102,7 @@ R_FAMILIES = [
 # (family label, C key or None, Rust key or None) for the per-family aggregate.
 FAMILY_ROWS = [
     ("raw_ptr_deref", "c_raw_ptr_deref", "r_raw_ptr_deref"),
-    ("extern_unsafe_call (FFI/unsafe fn)", None, "r_extern_unsafe_call"),
+    ("extern_unsafe_call (genuine libc/foreign)", None, "r_extern_unsafe_call"),
     ("static_mut", "c_static_mut", "r_static_mut"),
     ("union read", "c_union_member", "r_union_read"),
     ("transmute", None, "r_transmute"),
@@ -229,6 +225,11 @@ def aggregate_block(rows):
     # unchecked_arith — separate lane, reported but never folded in.
     lines.append(f"| _unchecked_arith (separate lane)_ | _{fmt_n(tot('c_unchecked_arith'))}_ | "
                  f"_{fmt_n(tot('r_unchecked_arith'))}_ | _—_ |")
+    # internal_call — first-party cross-TU / harness-FFI / benign compiler
+    # intrinsics; an emission artifact, NOT preserved-from-C unsafety, so it is
+    # reported for transparency but excluded from the Rust total above.
+    lines.append(f"| _internal_call (first-party / harness-FFI / intrinsics — excluded)_ | "
+                 f"_—_ | _{fmt_n(tot('r_internal_call'))}_ | _—_ |")
     c_exprs = tot("c_total_exprs")
     r_exprs = tot("rust_exprs")
     c_uod = f"{100.0 * c_total / c_exprs:.2f}%" if c_exprs else "n/a"

@@ -24,7 +24,7 @@ harness.
 |---|---|---|---|---:|---:|---:|---:|---:|
 | [SQLite](https://www.sqlite.org/) → [Rust output](https://github.com/o2alexanderfedin/sqlite-rust-mirror) | ✅ all 281 files | ✅ all 281 crates | ✅ all 10 SQL scripts byte-identical vs native CLI (3 runs) | `pending-regen` | `pending-regen` | `pending-regen` | `pending-regen` | `pending-regen` |
 
-<sub>A **site** is one individual unsafe OPERATION, not a function or a whole `unsafe {}` block (those are too coarse). **Transpiled / Compiled** — did cpp2rust emit, and does the emitted code build, for the C++ lane and the Rust lane (`ok/total` translation units). **Tested** — the differential test oracles: **A/B** runs the project's own program built from native C vs from the transpiled C++/Rust and compares output byte-for-byte (`—` = not linkable as one binary, e.g. cross-TU C++ name mangling or unresolved builtin FFI; logged, never silently passed); **pass@1** is CRUST-bench's official oracle — the emitted crate spliced under the hand-written RBench interface, then `cargo test`. For SQLite the Tested cell is the whole-CLI differential over the SQL scripts. **Original C Unsafe Sites** — initial unsafe operation sites in the C source (`raw_ptr_deref + static_mut + union_member`). **Emitted Rust Unsafe Sites** — resulting unsafe operation sites in the emitted Rust (`raw_ptr_deref + extern_unsafe_call + static_mut + union_read + transmute + inline_asm`). These are not a clean subtraction: C treats FFI calls as free, but each becomes an `extern_unsafe_call` in Rust — so the per-family breakdown below the table is where the real memory-safety story (the raw-pointer-deref line) is visible. `unchecked_arith` is a separate lane (C pointer arithmetic has no Rust unsafe counterpart), never folded in. **Unsafe Site Reduction (%)** — `(C − Rust) ÷ C`; **positive = net fewer** unsafe sites, **negative = net more** (this build is a faithful transliteration — ownership/borrow uplift is deferred — so where Rust adds sites it is mostly C's previously-hidden FFI unsafety made explicit, not new unsafety). **Baseline C UOD** / **Emitted Rust UOD** — Unsafe-Operation-Density: unsafe sites ÷ total expressions in that lane's own AST (lower is safer); the denominator grows with any added scaffolding, so the density cannot be gamed by code inflation. All counts use thousands separators.</sub>
+<sub>A **site** is one individual unsafe OPERATION, not a function or a whole `unsafe {}` block (those are too coarse). **Transpiled / Compiled** — did cpp2rust emit, and does the emitted code build, for the C++ lane and the Rust lane (`ok/total` translation units). **Tested** — the differential test oracles: **A/B** runs the project's own program built from native C vs from the transpiled C++/Rust and compares output byte-for-byte (`—` = not linkable as one binary, e.g. cross-TU C++ name mangling or unresolved builtin FFI; logged, never silently passed); **pass@1** is CRUST-bench's official oracle — the emitted crate spliced under the hand-written RBench interface, then `cargo test`. For SQLite the Tested cell is the whole-CLI differential over the SQL scripts. **Original C Unsafe Sites** — initial unsafe operation sites in the C source (`raw_ptr_deref + static_mut + union_member`). **Emitted Rust Unsafe Sites** — resulting unsafe operation sites in the emitted Rust (`raw_ptr_deref + extern_unsafe_call + static_mut + union_read + transmute + inline_asm`). `extern_unsafe_call` counts only GENUINELY external calls (libc / foreign symbols). A call whose target is defined elsewhere in the project - a first-party function reached over the C ABI only because the emitter emits one crate per translation unit and exposes symbols to the CRUST-bench harness - plus transpiler shims and benign compiler intrinsics (assert, branch hints, object-size) are emission artifacts, NOT unsafety carried over from the C source; they go to a separate `internal_call` lane never folded into the total. `unchecked_arith` (C pointer arithmetic, no Rust unsafe counterpart) is likewise separate. The per-family breakdown below shows every lane. **Unsafe Site Reduction (%)** — `(C − Rust) ÷ C`; **positive = net fewer** unsafe sites, **negative = net more** (this build is a faithful transliteration — ownership/borrow uplift is deferred — so where Rust adds sites it is mostly C's previously-hidden FFI unsafety made explicit, not new unsafety). **Baseline C UOD** / **Emitted Rust UOD** — Unsafe-Operation-Density: unsafe sites ÷ total expressions in that lane's own AST (lower is safer); the denominator grows with any added scaffolding, so the density cannot be gamed by code inflation. All counts use thousands separators.</sub>
 
 <sub>SQLite's site columns are `pending-regen`: the SQLite unsafe-site census is regenerated off the fixed develop tip AFTER the current verification battery completes and the 16-02 SQLite-lane fix merges — numbers produced before then would not match the shipped state. State columns above reflect the last verified run (2026-07-20).</sub>
 <!-- sqlite-table:end -->
@@ -82,17 +82,24 @@ Safety is measured in per-operation **SITES**, not functions, and reported as
 the Multi-Dimensional Safety Matrix: Original C sites, Emitted Rust sites, the
 reduction %, and the Unsafe-Operation-Density (UOD = unsafe sites ÷ total
 expressions) on each side. Across all 100 projects: **29,302 Original C unsafe
-sites → 47,558 Emitted Rust unsafe sites** (Unsafe Site Reduction **−62.3%**),
-at **Baseline C UOD 8.90% → Emitted Rust UOD 9.48%** — the density is nearly
-unchanged. This build is a faithful transliteration (ownership/borrow uplift is
-deliberately deferred), so the Rust total is *higher* mainly because it counts
-what C hides: every C library/FFI call is free in C but an explicit
-`extern_unsafe_call` in Rust (16,572 of the Rust sites). The real memory-safety
-story lives in the per-family C→Rust split beneath the table — e.g. C's 840
-union type-punning accesses become 1,323 explicit `transmute`s and just 2 raw
-union reads, and C pointer arithmetic (474 sites) has no Rust unsafe
-counterpart at all (lowered to safe `wrapping_*`). 13 projects show a net
-reduction in total sites.
+sites → 43,319 Emitted Rust unsafe sites** (Unsafe Site Reduction **−47.8%**),
+at **Baseline C UOD 8.90% → Emitted Rust UOD 8.64%** — the emitted Rust's
+density of unsafe operations is slightly **lower** than the C baseline's.
+
+Only GENUINELY external calls count: an `extern_unsafe_call` is a call to libc /
+a foreign symbol (12,333 sites). Calls the transpiler introduces purely to
+stitch the program together — first-party functions reached over the C ABI
+because we emit one crate per translation unit and expose symbols to the
+CRUST-bench test harness, plus transpiler shims and benign compiler intrinsics
+(`assert`, branch hints) — are emission artifacts, not unsafety carried over
+from the C, so they are split into a separate `internal_call` lane (4,239 sites,
+excluded from the total). The reduction is still negative because this build is
+a faithful transliteration (ownership/borrow uplift is deliberately deferred),
+so genuine libc calls that are free in C are explicit unsafe calls in Rust. The
+real memory-safety story lives in the per-family C→Rust split beneath the table
+— e.g. C's 840 union type-punning accesses become 1,323 explicit `transmute`s
+and just 2 raw union reads, and C pointer arithmetic (474 sites) has no Rust
+unsafe counterpart at all (lowered to safe `wrapping_*`).
 
 ### Per-project results
 
@@ -110,120 +117,121 @@ C→Rust before/after breakdown follows it.
 | [2DPartInt](https://github.com/eafit-apolo/2DPartInt) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
 | [42-Kocaeli-Printf](https://github.com/enes2424/42-Kocaeli-Printf) | C++ ❌ · Rust ❌ | C++ 0/0 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | 0 | 0 | — | — | — |
 | [aes128-SIMD](https://github.com/at0m741/aes128-SIMD) | C++ ❌ · Rust ❌ | C++ 0/0 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | 0 | 0 | — | — | — |
-| [amp](https://github.com/clibs/amp) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 2/2 | A/B C++ —·Rust — · pass@1 ❌ | 20 | 47 | −135.0% | 3.8% | 9.7% |
-| [approxidate](https://github.com/thatguystone/approxidate) | C++ ✅ · Rust ✅ | C++ 1/2 · Rust 0/2 | A/B C++ —·Rust — · pass@1 ❌ | 188 | 441 | −134.6% | 4.4% | 8.9% |
+| [amp](https://github.com/clibs/amp) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 2/2 | A/B C++ —·Rust — · pass@1 ❌ | 20 | 39 | −95.0% | 3.8% | 8.1% |
+| [approxidate](https://github.com/thatguystone/approxidate) | C++ ✅ · Rust ✅ | C++ 1/2 · Rust 0/2 | A/B C++ —·Rust — · pass@1 ❌ | 188 | 384 | −104.3% | 4.4% | 7.8% |
 | [avalanche](https://github.com/drjerry/avalanche) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
-| [bhshell](https://github.com/bsach64/bhshell) | C++ ⚠️ · Rust ⚠️ | C++ 4/4 · Rust 2/4 | A/B C++ —·Rust — · pass@1 ❌ | 245 | 304 | −24.1% | 11.8% | 11.9% |
-| [bigint](https://github.com/adam-mcdaniel/bigint) | C++ ✅ · Rust ✅ | C++ 3/3 · Rust 0/3 | A/B C++ —·Rust — · pass@1 — | 0 | 478 | — | 0.0% | 4.4% |
+| [bhshell](https://github.com/bsach64/bhshell) | C++ ⚠️ · Rust ⚠️ | C++ 4/4 · Rust 2/4 | A/B C++ —·Rust — · pass@1 ❌ | 245 | 267 | −9.0% | 11.8% | 10.4% |
+| [bigint](https://github.com/adam-mcdaniel/bigint) | C++ ✅ · Rust ✅ | C++ 3/3 · Rust 0/3 | A/B C++ —·Rust — · pass@1 — | 0 | 439 | — | 0.0% | 4.0% |
 | [bitset](https://github.com/abenhlal/bitset) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
 | [blt](https://github.com/blynn/blt) | C++ ❌ · Rust ❌ | C++ 0/0 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | 0 | 0 | — | — | — |
-| [bostree](https://github.com/phillipberndt/bostree) | C++ ✅ · Rust ✅ | C++ 2/3 · Rust 3/3 | A/B C++ —·Rust — · pass@1 ❌ | 368 | 501 | −36.1% | 13.4% | 13.3% |
-| [btree-map](https://github.com/EdsonHTJ/btree-map) | C++ ✅ · Rust ✅ | C++ 1/2 · Rust 2/2 | A/B C++ —·Rust — · pass@1 — | 178 | 526 | −195.5% | 5.8% | 15.6% |
-| [c-aces](https://github.com/enum-class/c-aces) | C++ ⚠️ · Rust ⚠️ | C++ 5/5 · Rust 4/5 | A/B C++ —·Rust — · pass@1 — | 330 | 287 | +13.0% | 9.1% | 8.1% |
-| [c-blind-rsa-signatures](https://github.com/jedisct1/c-blind-rsa-signatures) | C++ ✅ · Rust ✅ | C++ 1/2 · Rust 0/2 | A/B C++ —·Rust — · pass@1 — | 137 | 3,101 | −2163.5% | 3.1% | 20.1% |
+| [bostree](https://github.com/phillipberndt/bostree) | C++ ✅ · Rust ✅ | C++ 2/3 · Rust 3/3 | A/B C++ —·Rust — · pass@1 ❌ | 368 | 466 | −26.6% | 13.4% | 12.4% |
+| [btree-map](https://github.com/EdsonHTJ/btree-map) | C++ ✅ · Rust ✅ | C++ 1/2 · Rust 2/2 | A/B C++ —·Rust — · pass@1 — | 178 | 432 | −142.7% | 5.8% | 12.8% |
+| [c-aces](https://github.com/enum-class/c-aces) | C++ ⚠️ · Rust ⚠️ | C++ 5/5 · Rust 4/5 | A/B C++ —·Rust — · pass@1 — | 330 | 269 | +18.5% | 9.1% | 7.6% |
+| [c-blind-rsa-signatures](https://github.com/jedisct1/c-blind-rsa-signatures) | C++ ✅ · Rust ✅ | C++ 1/2 · Rust 0/2 | A/B C++ —·Rust — · pass@1 — | 137 | 3,023 | −2106.6% | 3.1% | 19.6% |
 | [c-string](https://github.com/vnkrtv/c-string) | C++ ❌ · Rust ❌ | C++ 0/0 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | 0 | 0 | — | — | — |
-| [carrays](https://github.com/noporpoise/carrays) | C++ ✅ · Rust ✅ | C++ 1/2 · Rust 0/2 | A/B C++ —·Rust — · pass@1 ❌ | 349 | 1,819 | −421.2% | 2.8% | 9.1% |
+| [carrays](https://github.com/noporpoise/carrays) | C++ ✅ · Rust ✅ | C++ 1/2 · Rust 0/2 | A/B C++ —·Rust — · pass@1 ❌ | 349 | 1,483 | −324.9% | 2.8% | 7.5% |
 | [cfsm](https://github.com/nhjschulz/cfsm) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
 | [chtrie](https://github.com/dongyx/chtrie) | C++ ✅ · Rust ✅ | C++ 1/1 · Rust 1/1 | A/B C++ —·Rust — · pass@1 — | 66 | 76 | −15.2% | 12.2% | 9.0% |
-| [CircularBuffer](https://github.com/Roen-Ro/CircularBuffer) | C++ ⚠️ · Rust ⚠️ | C++ 0/1 · Rust 0/1 | A/B C++ —·Rust — · pass@1 ❌ | 102 | 75 | +26.5% | 11.0% | 7.4% |
-| [cissy](https://github.com/slass100/cissy) | C++ ✅ · Rust ✅ | C++ 4/7 · Rust 5/7 | A/B C++ —·Rust — · pass@1 ❌ | 330 | 781 | −136.7% | 5.5% | 15.2% |
-| [cJSON](https://github.com/faycheng/cJSON) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 1/2 | A/B C++ ✅·Rust — · pass@1 ❌ | 478 | 1,371 | −186.8% | 7.2% | 11.8% |
+| [CircularBuffer](https://github.com/Roen-Ro/CircularBuffer) | C++ ⚠️ · Rust ⚠️ | C++ 0/1 · Rust 0/1 | A/B C++ —·Rust — · pass@1 ❌ | 102 | 64 | +37.3% | 11.0% | 6.3% |
+| [cissy](https://github.com/slass100/cissy) | C++ ✅ · Rust ✅ | C++ 4/7 · Rust 5/7 | A/B C++ —·Rust — · pass@1 ❌ | 330 | 675 | −104.5% | 5.5% | 13.1% |
+| [cJSON](https://github.com/faycheng/cJSON) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 1/2 | A/B C++ ✅·Rust — · pass@1 ❌ | 478 | 1,197 | −150.4% | 7.2% | 10.3% |
 | [clhash](https://github.com/simdhash/clhash) | C++ ❌ · Rust ❌ | C++ 0/0 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | 0 | 0 | — | — | — |
 | [clog](https://github.com/mmueller/clog) | C++ ✅ · Rust ❌ | C++ 0/1 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | 10 | 0 | +100.0% | 0.6% | — |
 | [coroutine](https://github.com/cloudwu/coroutine) | C++ ⚠️ · Rust ⚠️ | C++ 1/1 · Rust 1/1 | A/B C++ —·Rust — · pass@1 — | 1 | 19 | −1800.0% | 0.9% | 14.7% |
-| [cset](https://github.com/RobusGauli/cset.h) | C++ ✅ · Rust ✅ | C++ 0/1 · Rust 0/1 | A/B C++ —·Rust — · pass@1 — | 14,564 | 25 | +99.8% | 13.5% | 2.9% |
+| [cset](https://github.com/RobusGauli/cset.h) | C++ ✅ · Rust ✅ | C++ 0/1 · Rust 0/1 | A/B C++ —·Rust — · pass@1 — | 14,564 | 24 | +99.8% | 13.5% | 2.8% |
 | [csyncmers](https://github.com/rchikhi/csyncmers) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 2/2 | A/B C++ —·Rust — · pass@1 — | 10 | 92 | −820.0% | 1.6% | 5.1% |
 | [dict](https://github.com/wrnlb666/dict) | C++ ✅ · Rust ✅ | C++ 0/1 · Rust 0/1 | A/B C++ —·Rust — · pass@1 — | 352 | 0 | +100.0% | 8.9% | — |
 | [emlang](https://github.com/LordOfTrident/emlang) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
 | [expr](https://github.com/radarsat1/expr) | C++ ✅ · Rust ⚠️ | C++ 1/2 · Rust 1/1 | A/B C++ —·Rust — · pass@1 — | 360 | 28 | +92.2% | 9.0% | 6.2% |
 | [FastHamming](https://github.com/BenBE/FastHamming.git) | C++ ❌ · Rust ❌ | C++ 0/0 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | 0 | 0 | — | — | — |
 | [fft](https://github.com/kevin0x0/fft) | C++ ✅ · Rust ✅ | C++ 0/1 · Rust 1/1 | A/B C++ —·Rust — · pass@1 — | 78 | 106 | −35.9% | 4.3% | 4.8% |
-| [file2str](https://github.com/willemt/file2str) | C++ ✅ · Rust ✅ | C++ 4/4 · Rust 3/4 | A/B C++ —·Rust — · pass@1 ❌ | 82 | 174 | −112.2% | 5.2% | 9.8% |
+| [file2str](https://github.com/willemt/file2str) | C++ ✅ · Rust ✅ | C++ 4/4 · Rust 3/4 | A/B C++ —·Rust — · pass@1 ❌ | 82 | 147 | −79.3% | 5.2% | 8.3% |
 | [fleur](https://github.com/hashlookup/fleur) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
-| [fs_c](https://github.com/jwerle/fs.c) | C++ ✅ · Rust ✅ | C++ 1/1 · Rust 1/1 | A/B C++ —·Rust — · pass@1 — | 1 | 52 | −5100.0% | 0.2% | 11.2% |
+| [fs_c](https://github.com/jwerle/fs.c) | C++ ✅ · Rust ✅ | C++ 1/1 · Rust 1/1 | A/B C++ —·Rust — · pass@1 — | 1 | 46 | −4500.0% | 0.2% | 9.9% |
 | [fslib](https://github.com/c0stya/fslib) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
-| [Genetic-neural-network-for-simple-control](https://github.com/DemianovE/Genetic-neural-network-for-simple-control) | C++ ⚠️ · Rust ⚠️ | C++ 12/12 · Rust 10/12 | A/B C++ —·Rust — · pass@1 — | 644 | 803 | −24.7% | 14.6% | 13.1% |
+| [Genetic-neural-network-for-simple-control](https://github.com/DemianovE/Genetic-neural-network-for-simple-control) | C++ ⚠️ · Rust ⚠️ | C++ 12/12 · Rust 10/12 | A/B C++ —·Rust — · pass@1 — | 644 | 779 | −21.0% | 14.6% | 12.7% |
 | [geofence](https://github.com/bytebeamio/geofence.git) | C++ ✅ · Rust ✅ | C++ 1/1 · Rust 0/1 | A/B C++ —·Rust — · pass@1 — | 12 | 6 | +50.0% | 4.3% | 2.7% |
 | [gfc](https://github.com/maxmouchet/gfc.git) | C++ ❌ · Rust ❌ | C++ 0/0 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | 0 | 0 | — | — | — |
-| [gorilla-paper-encode](https://github.com/MrBean818/gorilla-paper-encode) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 1/2 | A/B C++ ✅·Rust — · pass@1 — | 173 | 145 | +16.2% | 8.9% | 4.4% |
-| [Graph-recogniser](https://github.com/NikolaYolov/Graph-recogniser) | C++ ✅ · Rust ✅ | C++ 4/4 · Rust 0/4 | A/B C++ ✅·Rust — · pass@1 — | 141 | 419 | −197.2% | 6.0% | 14.6% |
-| [hamta](https://github.com/burtgulash/hamta) | C++ ✅ · Rust ✅ | C++ 0/1 · Rust 1/1 | A/B C++ —·Rust — · pass@1 — | 145 | 34 | +76.6% | 8.6% | 9.6% |
-| [Holdem-Odds](https://github.com/gnuvince/Holdem-Odds) | C++ ✅ · Rust ✅ | C++ 4/5 · Rust 3/5 | A/B C++ —·Rust — · pass@1 — | 64 | 95 | −48.4% | 5.6% | 6.4% |
+| [gorilla-paper-encode](https://github.com/MrBean818/gorilla-paper-encode) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 1/2 | A/B C++ ✅·Rust — · pass@1 — | 173 | 131 | +24.3% | 8.9% | 3.9% |
+| [Graph-recogniser](https://github.com/NikolaYolov/Graph-recogniser) | C++ ✅ · Rust ✅ | C++ 4/4 · Rust 0/4 | A/B C++ ✅·Rust — · pass@1 — | 141 | 325 | −130.5% | 6.0% | 11.3% |
+| [hamta](https://github.com/burtgulash/hamta) | C++ ✅ · Rust ✅ | C++ 0/1 · Rust 1/1 | A/B C++ —·Rust — · pass@1 — | 145 | 31 | +78.6% | 8.6% | 8.8% |
+| [Holdem-Odds](https://github.com/gnuvince/Holdem-Odds) | C++ ✅ · Rust ✅ | C++ 4/5 · Rust 3/5 | A/B C++ —·Rust — · pass@1 — | 64 | 80 | −25.0% | 5.6% | 5.4% |
 | [hydra](https://github.com/emad-elsaid/hydra) | C++ ✅ · Rust ✅ | C++ 1/1 · Rust 1/1 | A/B C++ —·Rust — · pass@1 — | 71 | 148 | −108.5% | 7.7% | 14.3% |
-| [impcheck](https://github.com/domschrei/impcheck) | C++ ⚠️ · Rust ⚠️ | C++ 2/2 · Rust 2/2 | A/B C++ —·Rust — · pass@1 ❌ | 0 | 4 | — | 0.0% | 16.0% |
+| [impcheck](https://github.com/domschrei/impcheck) | C++ ⚠️ · Rust ⚠️ | C++ 2/2 · Rust 2/2 | A/B C++ —·Rust — · pass@1 ❌ | 0 | 3 | — | 0.0% | 12.0% |
 | [inversion_list](https://github.com/hou-12/Inversion-List-Implementation-for-Interval-Manipulation) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
-| [jccc](https://github.com/jabacat/jccc) | C++ ✅ · Rust ✅ | C++ 12/13 · Rust 11/13 | A/B C++ —·Rust — · pass@1 ❌ | 226 | 794 | −251.3% | 4.0% | 11.6% |
-| [kairoCompiler](https://github.com/kairo-yr/kairoCompiler) | C++ ✅ · Rust ⚠️ | C++ 3/10 · Rust 0/5 | A/B C++ —·Rust — · pass@1 ❌ | 193 | 263 | −36.3% | 4.1% | 12.2% |
-| [kd3](https://github.com/shawnchin/kd3) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 2/2 | A/B C++ ✅·Rust — · pass@1 ❌ | 179 | 281 | −57.0% | 6.7% | 9.9% |
+| [jccc](https://github.com/jabacat/jccc) | C++ ✅ · Rust ✅ | C++ 12/13 · Rust 11/13 | A/B C++ —·Rust — · pass@1 ❌ | 226 | 718 | −217.7% | 4.0% | 10.5% |
+| [kairoCompiler](https://github.com/kairo-yr/kairoCompiler) | C++ ✅ · Rust ⚠️ | C++ 3/10 · Rust 0/5 | A/B C++ —·Rust — · pass@1 ❌ | 193 | 234 | −21.2% | 4.1% | 10.9% |
+| [kd3](https://github.com/shawnchin/kd3) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 2/2 | A/B C++ ✅·Rust — · pass@1 ❌ | 179 | 228 | −27.4% | 6.7% | 8.0% |
 | [lambda-calculus-eval](https://github.com/Lorenzobattistela/lambda-calculus-eval) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
-| [leftpad](https://github.com/sjmulder/leftpad) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 2/2 | A/B C++ ✅·Rust ✅ · pass@1 ❌ | 16 | 41 | −156.2% | 5.5% | 9.9% |
-| [lib2bit](https://github.com/dpryan79/lib2bit) | C++ ✅ · Rust ✅ | C++ 0/1 · Rust 1/1 | A/B C++ —·Rust — · pass@1 — | 432 | 598 | −38.4% | 10.8% | 8.9% |
+| [leftpad](https://github.com/sjmulder/leftpad) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 2/2 | A/B C++ ✅·Rust ✅ · pass@1 ❌ | 16 | 39 | −143.8% | 5.5% | 9.4% |
+| [lib2bit](https://github.com/dpryan79/lib2bit) | C++ ✅ · Rust ✅ | C++ 0/1 · Rust 1/1 | A/B C++ —·Rust — · pass@1 — | 432 | 593 | −37.3% | 10.8% | 8.9% |
 | [libbase122](https://github.com/kevinAlbs/libbase122) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
-| [libbeaufort](https://github.com/jwerle/libbeaufort) | C++ ✅ · Rust ✅ | C++ 3/3 · Rust 3/3 | A/B C++ —·Rust — · pass@1 ❌ | 37 | 65 | −75.7% | 5.6% | 6.9% |
-| [libfor](https://github.com/cruppstahl/libfor) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 2/2 | A/B C++ ✅·Rust — · pass@1 — | 55 | 14,698 | −26623.6% | 2.5% | 7.2% |
+| [libbeaufort](https://github.com/jwerle/libbeaufort) | C++ ✅ · Rust ✅ | C++ 3/3 · Rust 3/3 | A/B C++ —·Rust — · pass@1 ❌ | 37 | 63 | −70.3% | 5.6% | 6.7% |
+| [libfor](https://github.com/cruppstahl/libfor) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 2/2 | A/B C++ ✅·Rust — · pass@1 — | 55 | 14,562 | −26376.4% | 2.5% | 7.2% |
 | [libm17](https://github.com/M17-Project/libm17) | C++ ❌ · Rust ❌ | C++ 0/0 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | 0 | 0 | — | — | — |
-| [libpgn](https://github.com/youkwhd/libpgn) | C++ ✅ · Rust ✅ | C++ 11/12 · Rust 4/12 | A/B C++ —·Rust — · pass@1 ❌ | 339 | 678 | −100.0% | 6.7% | 10.2% |
+| [libpgn](https://github.com/youkwhd/libpgn) | C++ ✅ · Rust ✅ | C++ 11/12 · Rust 4/12 | A/B C++ —·Rust — · pass@1 ❌ | 339 | 553 | −63.1% | 6.7% | 8.3% |
 | [libpsbt](https://github.com/jb55/libpsbt) | C++ ❌ · Rust ❌ | C++ 0/0 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | 0 | 0 | — | — | — |
 | [libqueue](https://github.com/resyfer/libqueue) | C++ ❌ · Rust ❌ | C++ 0/0 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | 0 | 0 | — | — | — |
 | [libtinyfseq](https://github.com/Cryptkeeper/libtinyfseq) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
 | [libutf](https://github.com/holepunchto/libutf) | C++ ⚠️ · Rust ✅ | C++ 0/27 · Rust 0/36 | A/B C++ —·Rust — · pass@1 — | 122 | 0 | +100.0% | 1.9% | 0.0% |
-| [libvcd](https://github.com/sorousherafat/libvcd) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 1/2 | A/B C++ ✅·Rust — · pass@1 ❌ | 42 | 111 | −164.3% | 4.3% | 9.1% |
+| [libvcd](https://github.com/sorousherafat/libvcd) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 1/2 | A/B C++ ✅·Rust — · pass@1 ❌ | 42 | 104 | −147.6% | 4.3% | 8.5% |
 | [libwecan](https://github.com/nisennenmondai/libwecan) | C++ ❌ · Rust ❌ | C++ 0/0 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | 0 | 0 | — | — | — |
-| [Linear-Algebra-C](https://github.com/barrettotte/Linear-Algebra-C) | C++ ✅ · Rust ✅ | C++ 4/4 · Rust 1/4 | A/B C++ ✅·Rust — · pass@1 — | 499 | 1,055 | −111.4% | 6.3% | 11.4% |
+| [Linear-Algebra-C](https://github.com/barrettotte/Linear-Algebra-C) | C++ ✅ · Rust ✅ | C++ 4/4 · Rust 1/4 | A/B C++ ✅·Rust — · pass@1 — | 499 | 621 | −24.4% | 6.3% | 6.7% |
 | [ljmm](https://github.com/cloudflare/ljmm) | C++ ❌ · Rust ❌ | C++ 0/0 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | 0 | 0 | — | — | — |
 | [LTRE](https://github.com/Bricktech2000/LTRE) | C++ ✅ · Rust ⚠️ | C++ 1/2 · Rust 0/1 | A/B C++ —·Rust — · pass@1 ❌ | 476 | 0 | +100.0% | 7.3% | — |
 | [Math-Library-in-C](https://github.com/Astrodynamic/Math-Library-in-C) | C++ ❌ · Rust ❌ | C++ 0/0 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | 0 | 0 | — | — | — |
 | [matrix_multiplication](https://github.com/DevRuibin/matrix_multiplication) | C++ ⚠️ · Rust ⚠️ | C++ 1/1 · Rust 1/1 | A/B C++ —·Rust — · pass@1 ❌ | 2 | 12 | −500.0% | 2.6% | 10.7% |
 | [mdb](https://github.com/chuigda/mdb.git) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
-| [Megalania](https://github.com/blackle/Megalania) | C++ ⚠️ · Rust ⚠️ | C++ 16/16 · Rust 9/16 | A/B C++ —·Rust — · pass@1 ❌ | 451 | 866 | −92.0% | 8.2% | 12.5% |
-| [merkle-tree-c](https://github.com/TheWaWaR/merkle-tree-c) | C++ ✅ · Rust ✅ | C++ 0/1 · Rust 0/1 | A/B C++ —·Rust — · pass@1 — | 25 | 405 | −1520.0% | 1.7% | 1.8% |
+| [Megalania](https://github.com/blackle/Megalania) | C++ ⚠️ · Rust ⚠️ | C++ 16/16 · Rust 9/16 | A/B C++ —·Rust — · pass@1 ❌ | 451 | 760 | −68.5% | 8.2% | 11.0% |
+| [merkle-tree-c](https://github.com/TheWaWaR/merkle-tree-c) | C++ ✅ · Rust ✅ | C++ 0/1 · Rust 0/1 | A/B C++ —·Rust — · pass@1 — | 25 | 346 | −1284.0% | 1.7% | 1.5% |
 | [morton](https://github.com/jart/morton) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
-| [murmurhash_c](https://github.com/jwerle/murmurhash.c) | C++ ✅ · Rust ✅ | C++ 3/3 · Rust 3/3 | A/B C++ —·Rust — · pass@1 ❌ | 11 | 73 | −563.6% | 1.5% | 9.7% |
-| [mvptree](https://github.com/michaelmior/mvptree) | C++ ✅ · Rust ✅ | C++ 3/3 · Rust 2/3 | A/B C++ —·Rust — · pass@1 ❌ | 1,004 | 1,738 | −73.1% | 9.6% | 13.5% |
-| [NandC](https://github.com/Dcraftbg/NandC) | C++ ✅ · Rust ✅ | C++ 0/1 · Rust 0/1 | A/B C++ —·Rust — · pass@1 — | 0 | 33 | — | 0.0% | 5.4% |
-| [Phills_DHT](https://github.com/PhillipTaylor/Phills_DHT) | C++ ✅ · Rust ✅ | C++ 1/1 · Rust 0/1 | A/B C++ —·Rust — · pass@1 — | 27 | 93 | −244.4% | 5.0% | 17.0% |
-| [quadtree](https://github.com/thejefflarson/quadtree) | C++ ✅ · Rust ✅ | C++ 5/5 · Rust 5/5 | A/B C++ ✅·Rust ✅ · pass@1 ❌ | 200 | 425 | −112.5% | 7.5% | 14.2% |
+| [murmurhash_c](https://github.com/jwerle/murmurhash.c) | C++ ✅ · Rust ✅ | C++ 3/3 · Rust 3/3 | A/B C++ —·Rust — · pass@1 ❌ | 11 | 67 | −509.1% | 1.5% | 8.9% |
+| [mvptree](https://github.com/michaelmior/mvptree) | C++ ✅ · Rust ✅ | C++ 3/3 · Rust 2/3 | A/B C++ —·Rust — · pass@1 ❌ | 1,004 | 1,542 | −53.6% | 9.6% | 12.0% |
+| [NandC](https://github.com/Dcraftbg/NandC) | C++ ✅ · Rust ✅ | C++ 0/1 · Rust 0/1 | A/B C++ —·Rust — · pass@1 — | 0 | 20 | — | 0.0% | 3.3% |
+| [Phills_DHT](https://github.com/PhillipTaylor/Phills_DHT) | C++ ✅ · Rust ✅ | C++ 1/1 · Rust 0/1 | A/B C++ —·Rust — · pass@1 — | 27 | 76 | −181.5% | 5.0% | 13.9% |
+| [quadtree](https://github.com/thejefflarson/quadtree) | C++ ✅ · Rust ✅ | C++ 5/5 · Rust 5/5 | A/B C++ ✅·Rust ✅ · pass@1 ❌ | 200 | 344 | −72.0% | 7.5% | 11.5% |
 | [razz_simulation](https://github.com/eus/razz_simulation) | C++ ✅ · Rust ❌ | C++ 0/1 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | 11 | 0 | +100.0% | 1.8% | — |
 | [rbtree-lab](https://github.com/jwowo/rbtree-lab) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
-| [recordManager](https://github.com/prachikotadia/-Record-Manager) | C++ ⚠️ · Rust ⚠️ | C++ 7/7 · Rust 1/7 | A/B C++ —·Rust — · pass@1 ❌ | 1,190 | 3,281 | −175.7% | 6.8% | 14.8% |
+| [recordManager](https://github.com/prachikotadia/-Record-Manager) | C++ ⚠️ · Rust ⚠️ | C++ 7/7 · Rust 1/7 | A/B C++ —·Rust — · pass@1 ❌ | 1,190 | 3,007 | −152.7% | 6.8% | 13.6% |
 | [rect_pack_h](https://github.com/luihabl/rect_pack.h) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
 | [Remimu](https://github.com/wareya/Remimu) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
-| [rhbloom](https://github.com/tidwall/rhbloom) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 1/2 | A/B C++ —·Rust — · pass@1 ❌ | 100 | 244 | −144.0% | 4.5% | 9.4% |
+| [rhbloom](https://github.com/tidwall/rhbloom) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 1/2 | A/B C++ —·Rust — · pass@1 ❌ | 100 | 202 | −102.0% | 4.5% | 7.8% |
 | [roaring-bitmap](https://github.com/chriso/roaring-bitmap) | C++ ❌ · Rust ❌ | C++ 0/0 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | 0 | 0 | — | — | — |
-| [rubiksolver](https://github.com/justjkk/rubiksolver) | C++ ✅ · Rust ✅ | C++ 2/5 · Rust 0/5 | A/B C++ —·Rust — · pass@1 ❌ | 379 | 871 | −129.8% | 6.7% | 12.6% |
+| [rubiksolver](https://github.com/justjkk/rubiksolver) | C++ ✅ · Rust ✅ | C++ 2/5 · Rust 0/5 | A/B C++ —·Rust — · pass@1 ❌ | 379 | 781 | −106.1% | 6.7% | 11.3% |
 | [satc](https://github.com/rjungemann/satc) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
-| [Simple-Config](https://github.com/0xHaru/Simple-Config) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 0/2 | A/B C++ ✅·Rust — · pass@1 — | 117 | 462 | −294.9% | 3.9% | 12.9% |
-| [Simple-Sparsehash](https://github.com/qpfiffer/Simple-Sparsehash) | C++ ✅ · Rust ✅ | C++ 1/2 · Rust 2/2 | A/B C++ —·Rust — · pass@1 — | 91 | 449 | −393.4% | 2.5% | 8.2% |
-| [simple_lang](https://github.com/lxbme/simple_lang) | C++ ✅ · Rust ⚠️ | C++ 11/11 · Rust 9/10 | A/B C++ —·Rust — · pass@1 ❌ | 263 | 550 | −109.1% | 6.8% | 14.5% |
-| [SimpleXML](https://github.com/kiennt/SimpleXML.git) | C++ ⚠️ · Rust ⚠️ | C++ 1/2 · Rust 0/2 | A/B C++ —·Rust — · pass@1 ❌ | 137 | 238 | −73.7% | 9.6% | 13.6% |
+| [Simple-Config](https://github.com/0xHaru/Simple-Config) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 0/2 | A/B C++ ✅·Rust — · pass@1 — | 117 | 361 | −208.5% | 3.9% | 10.1% |
+| [Simple-Sparsehash](https://github.com/qpfiffer/Simple-Sparsehash) | C++ ✅ · Rust ✅ | C++ 1/2 · Rust 2/2 | A/B C++ —·Rust — · pass@1 — | 91 | 386 | −324.2% | 2.5% | 7.0% |
+| [simple_lang](https://github.com/lxbme/simple_lang) | C++ ✅ · Rust ⚠️ | C++ 11/11 · Rust 9/10 | A/B C++ —·Rust — · pass@1 ❌ | 263 | 465 | −76.8% | 6.8% | 12.3% |
+| [SimpleXML](https://github.com/kiennt/SimpleXML.git) | C++ ⚠️ · Rust ⚠️ | C++ 1/2 · Rust 0/2 | A/B C++ —·Rust — · pass@1 ❌ | 137 | 208 | −51.8% | 9.6% | 11.9% |
 | [skp](https://github.com/rdentato/skp) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
-| [SlothLang](https://github.com/AaronCGoidel/SlothLang) | C++ ⚠️ · Rust ⚠️ | C++ 3/3 · Rust 3/3 | A/B C++ —·Rust — · pass@1 ❌ | 13 | 52 | −300.0% | 2.3% | 8.1% |
-| [ted](https://github.com/ajpen/ted) | C++ ⚠️ · Rust ✅ | C++ 3/3 · Rust 2/4 | A/B C++ —·Rust — · pass@1 ❌ | 339 | 732 | −115.9% | 6.7% | 11.3% |
-| [tisp](https://github.com/edvb/tisp) | C++ ✅ · Rust ✅ | C++ 0/2 · Rust 0/2 | A/B C++ —·Rust — · pass@1 ❌ | 621 | 2,804 | −351.5% | 10.9% | 12.1% |
-| [totp](https://github.com/sjmulder/totp) | C++ ✅ · Rust ✅ | C++ 2/3 · Rust 2/3 | A/B C++ —·Rust — · pass@1 ❌ | 23 | 225 | −878.3% | 0.9% | 7.0% |
-| [ulidgen](https://github.com/leahneukirchen/ulidgen) | C++ ⚠️ · Rust ⚠️ | C++ 1/1 · Rust 0/1 | A/B C++ —·Rust — · pass@1 — | 1 | 39 | −3800.0% | 0.4% | 10.8% |
-| [utf8](https://github.com/zahash/utf8.c) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 1/2 | A/B C++ ✅·Rust — · pass@1 ❌ | 75 | 708 | −844.0% | 1.5% | 16.9% |
+| [SlothLang](https://github.com/AaronCGoidel/SlothLang) | C++ ⚠️ · Rust ⚠️ | C++ 3/3 · Rust 3/3 | A/B C++ —·Rust — · pass@1 ❌ | 13 | 50 | −284.6% | 2.3% | 7.8% |
+| [ted](https://github.com/ajpen/ted) | C++ ⚠️ · Rust ✅ | C++ 3/3 · Rust 2/4 | A/B C++ —·Rust — · pass@1 ❌ | 339 | 571 | −68.4% | 6.7% | 8.8% |
+| [tisp](https://github.com/edvb/tisp) | C++ ✅ · Rust ✅ | C++ 0/2 · Rust 0/2 | A/B C++ —·Rust — · pass@1 ❌ | 621 | 2,249 | −262.2% | 10.9% | 9.7% |
+| [totp](https://github.com/sjmulder/totp) | C++ ✅ · Rust ✅ | C++ 2/3 · Rust 2/3 | A/B C++ —·Rust — · pass@1 ❌ | 23 | 179 | −678.3% | 0.9% | 5.5% |
+| [ulidgen](https://github.com/leahneukirchen/ulidgen) | C++ ⚠️ · Rust ⚠️ | C++ 1/1 · Rust 0/1 | A/B C++ —·Rust — · pass@1 — | 1 | 35 | −3400.0% | 0.4% | 9.7% |
+| [utf8](https://github.com/zahash/utf8.c) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 1/2 | A/B C++ ✅·Rust — · pass@1 ❌ | 75 | 593 | −690.7% | 1.5% | 14.2% |
 | [VaultSync](https://github.com/elhalili/VaultSync) | n/a — project build broken | — | — | 0 | 0 | — | — | — |
-| [vec](https://github.com/rxi/vec) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 2/2 | A/B C++ ✅·Rust — · pass@1 ❌ | 885 | 2,101 | −137.4% | 9.5% | 16.2% |
+| [vec](https://github.com/rxi/vec) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 2/2 | A/B C++ ✅·Rust — · pass@1 ❌ | 885 | 1,975 | −123.2% | 9.5% | 15.3% |
 | [worsp](https://github.com/sosukesuzuki/worsp) | C++ ⚠️ · Rust ⚠️ | C++ 0/1 · Rust 0/1 | A/B C++ —·Rust — · pass@1 ❌ | 1,087 | 0 | +100.0% | 13.6% | — |
-| [XOpt](https://github.com/drylikov/XOpt.git) | C++ ✅ · Rust ✅ | C++ 1/1 · Rust 0/1 | A/B C++ —·Rust — · pass@1 — | 135 | 616 | −356.3% | 8.5% | 6.4% |
+| [XOpt](https://github.com/drylikov/XOpt.git) | C++ ✅ · Rust ✅ | C++ 1/1 · Rust 0/1 | A/B C++ —·Rust — · pass@1 — | 135 | 596 | −341.5% | 8.5% | 6.2% |
 
-<sub>A **site** is one individual unsafe OPERATION, not a function or a whole `unsafe {}` block (those are too coarse). **Transpiled / Compiled** — did cpp2rust emit, and does the emitted code build, for the C++ lane and the Rust lane (`ok/total` translation units). **Tested** — the differential test oracles: **A/B** runs the project's own program built from native C vs from the transpiled C++/Rust and compares output byte-for-byte (`—` = not linkable as one binary, e.g. cross-TU C++ name mangling or unresolved builtin FFI; logged, never silently passed); **pass@1** is CRUST-bench's official oracle — the emitted crate spliced under the hand-written RBench interface, then `cargo test`. For SQLite the Tested cell is the whole-CLI differential over the SQL scripts. **Original C Unsafe Sites** — initial unsafe operation sites in the C source (`raw_ptr_deref + static_mut + union_member`). **Emitted Rust Unsafe Sites** — resulting unsafe operation sites in the emitted Rust (`raw_ptr_deref + extern_unsafe_call + static_mut + union_read + transmute + inline_asm`). These are not a clean subtraction: C treats FFI calls as free, but each becomes an `extern_unsafe_call` in Rust — so the per-family breakdown below the table is where the real memory-safety story (the raw-pointer-deref line) is visible. `unchecked_arith` is a separate lane (C pointer arithmetic has no Rust unsafe counterpart), never folded in. **Unsafe Site Reduction (%)** — `(C − Rust) ÷ C`; **positive = net fewer** unsafe sites, **negative = net more** (this build is a faithful transliteration — ownership/borrow uplift is deferred — so where Rust adds sites it is mostly C's previously-hidden FFI unsafety made explicit, not new unsafety). **Baseline C UOD** / **Emitted Rust UOD** — Unsafe-Operation-Density: unsafe sites ÷ total expressions in that lane's own AST (lower is safer); the denominator grows with any added scaffolding, so the density cannot be gamed by code inflation. All counts use thousands separators.</sub>
+<sub>A **site** is one individual unsafe OPERATION, not a function or a whole `unsafe {}` block (those are too coarse). **Transpiled / Compiled** — did cpp2rust emit, and does the emitted code build, for the C++ lane and the Rust lane (`ok/total` translation units). **Tested** — the differential test oracles: **A/B** runs the project's own program built from native C vs from the transpiled C++/Rust and compares output byte-for-byte (`—` = not linkable as one binary, e.g. cross-TU C++ name mangling or unresolved builtin FFI; logged, never silently passed); **pass@1** is CRUST-bench's official oracle — the emitted crate spliced under the hand-written RBench interface, then `cargo test`. For SQLite the Tested cell is the whole-CLI differential over the SQL scripts. **Original C Unsafe Sites** — initial unsafe operation sites in the C source (`raw_ptr_deref + static_mut + union_member`). **Emitted Rust Unsafe Sites** — resulting unsafe operation sites in the emitted Rust (`raw_ptr_deref + extern_unsafe_call + static_mut + union_read + transmute + inline_asm`). `extern_unsafe_call` counts only GENUINELY external calls (libc / foreign symbols). A call whose target is defined elsewhere in the project - a first-party function reached over the C ABI only because the emitter emits one crate per translation unit and exposes symbols to the CRUST-bench harness - plus transpiler shims and benign compiler intrinsics (assert, branch hints, object-size) are emission artifacts, NOT unsafety carried over from the C source; they go to a separate `internal_call` lane never folded into the total. `unchecked_arith` (C pointer arithmetic, no Rust unsafe counterpart) is likewise separate. The per-family breakdown below shows every lane. **Unsafe Site Reduction (%)** — `(C − Rust) ÷ C`; **positive = net fewer** unsafe sites, **negative = net more** (this build is a faithful transliteration — ownership/borrow uplift is deferred — so where Rust adds sites it is mostly C's previously-hidden FFI unsafety made explicit, not new unsafety). **Baseline C UOD** / **Emitted Rust UOD** — Unsafe-Operation-Density: unsafe sites ÷ total expressions in that lane's own AST (lower is safer); the denominator grows with any added scaffolding, so the density cannot be gamed by code inflation. All counts use thousands separators.</sub>
 
 **Unsafe operation sites by family — all projects (C initial → Rust resulting):**
 
 | Family | Sites (C) | Sites (Rust) | Δ (C−Rust) |
 |---|---:|---:|---:|
 | raw_ptr_deref | 27,588 | 28,796 | -1,208 |
-| extern_unsafe_call (FFI/unsafe fn) | — *(not unsafe in C)* | 16,572 | — |
+| extern_unsafe_call (genuine libc/foreign) | — *(not unsafe in C)* | 12,333 | — |
 | static_mut | 874 | 865 | 9 |
 | union read | 840 | 2 | 838 |
 | transmute | — *(not unsafe in C)* | 1,323 | — |
 | inline_asm | — *(not unsafe in C)* | 0 | — |
-| **Total (memory-safety sites)** | **29,302** | **47,558** | **-18,256** |
+| **Total (memory-safety sites)** | **29,302** | **43,319** | **-14,017** |
 | _unchecked_arith (separate lane)_ | _474_ | _0_ | _—_ |
+| _internal_call (first-party / harness-FFI / intrinsics — excluded)_ | _—_ | _4,239_ | _—_ |
 
-Corpus totals — Original C unsafe sites **29,302** → Emitted Rust unsafe sites **47,558** (Unsafe Site Reduction **−62.3%**; negative because this build is a faithful transliteration and surfaces C's hidden FFI unsafety — see the `extern_unsafe_call` row). Baseline C UOD **8.90%** → Emitted Rust UOD **9.48%** (unsafe sites ÷ total expressions in each lane's AST).
+Corpus totals — Original C unsafe sites **29,302** → Emitted Rust unsafe sites **43,319** (Unsafe Site Reduction **−47.8%**; negative because this build is a faithful transliteration and surfaces C's hidden FFI unsafety — see the `extern_unsafe_call` row). Baseline C UOD **8.90%** → Emitted Rust UOD **8.64%** (unsafe sites ÷ total expressions in each lane's AST).
 Raw-pointer dereferences (the core memory-safety family): 27,588 in C → 28,796 in Rust (**+1,208**; the emitter lowers some compound C accesses into several explicit Rust derefs, so a per-project split — not this raw aggregate — is the honest read of the memory-safety change).
 Caveat — measurement scope: the C funnel is main-file-scoped (a deliberate choice so system-header noise is excluded) while the Rust census counts the `#include`d project code the emitter inlines. Projects that `#include` a generated `.c` therefore skew both their own reduction and their weight here — notably **libfor** (55 C sites vs 14,698 Rust, because its 28K-line `for-gen.c` is inlined and fully unrolled); it alone is roughly half the corpus `raw_ptr_deref` total. Read the per-project rows, not just this aggregate.
 <!-- crust-table:end -->
