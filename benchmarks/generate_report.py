@@ -7,10 +7,14 @@ Usage:
         [--sqlite-status <tsv>] [--sqlite-sites <tsv>] [--update <RESULTS.md>]
 
 Both the CRUST-bench table and the SQLite flagship row use ONE UNIFIED column
-schema (DESIGN.md D3 + the "SQLite must be first-class + comparable" ruling):
+schema (DESIGN.md D3 + the "SQLite must be first-class + comparable" ruling) —
+the original state columns, then the Multi-Dimensional Safety Matrix:
 
-    | Project | Transpiled | Compiled | A/B (native vs transpiled) | pass@1
-    | Unsafe sites (C) | Unsafe sites (Rust) | Sites lifted | UOD (Rust) |
+    | Project | Transpiled | Compiled | Tested
+    | Original C Unsafe Sites | Emitted Rust Unsafe Sites
+    | Unsafe Site Reduction (%) | Baseline C UOD | Emitted Rust UOD |
+
+SQLite is also the first row of the per-project table (labeled "flagship").
 
 Safety is measured in per-OPERATION SITES, not functions (functions are too
 coarse). The numbers come from the census/funnel instruments, NOT a regex:
