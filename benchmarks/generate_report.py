@@ -256,6 +256,14 @@ def aggregate_block(rows):
         f"`extern_unsafe_call` row). Baseline C UOD **{c_uod}** → Emitted Rust "
         f"UOD **{r_uod}** (unsafe sites ÷ total expressions in each lane's AST).",
         deref_line,
+        "Caveat — measurement scope: the C funnel is main-file-scoped (a "
+        "deliberate choice so system-header noise is excluded) while the Rust "
+        "census counts the `#include`d project code the emitter inlines. Projects "
+        "that `#include` a generated `.c` therefore skew both their own reduction "
+        "and their weight here — notably **libfor** (55 C sites vs 14,698 Rust, "
+        "because its 28K-line `for-gen.c` is inlined and fully unrolled); it alone "
+        "is roughly half the corpus `raw_ptr_deref` total. Read the per-project "
+        "rows, not just this aggregate.",
     ]
     return "\n".join(l for l in lines if l is not None)
 
