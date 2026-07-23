@@ -80,7 +80,7 @@ LEGEND = (
     "source (`raw_ptr_deref + static_mut + union_member`). **Emitted Rust "
     "Unsafe Sites** — resulting unsafe operation sites in the emitted Rust "
     "(`raw_ptr_deref + extern_unsafe_call + static_mut + union_read + transmute "
-    "+ inline_asm`). `extern_unsafe_call` counts only GENUINELY external calls (libc / foreign symbols). A call whose target is defined elsewhere in the project - a first-party function reached over the C ABI only because the emitter emits one crate per translation unit and exposes symbols to the CRUST-bench harness - plus transpiler shims and benign compiler intrinsics (assert, branch hints, object-size) are emission artifacts, NOT unsafety carried over from the C source; they are split into two separate excluded lanes, `first_party_call` (cross-TU / harness-FFI / transpiler shims) and `intrinsic_call` (benign compiler intrinsics), neither ever folded into the total. `unchecked_arith` (C pointer arithmetic, no Rust unsafe counterpart) is likewise separate. The per-family breakdown below shows every lane. "
+    "+ inline_asm`). `extern_unsafe_call` counts only GENUINELY external calls (libc / foreign symbols). A call whose target is defined elsewhere in the project - a first-party function the emitter exposes through an `extern \"C\"` boundary so the emitted crate splices under the CRUST-bench harness - plus transpiler shims and benign compiler intrinsics (assert, branch hints, object-size) are emission artifacts, NOT unsafety carried over from the C source; they are split into two separate excluded lanes, `first_party_call` (harness-FFI / transpiler shims) and `intrinsic_call` (benign compiler intrinsics), neither ever folded into the total. `unchecked_arith` (C pointer arithmetic, no Rust unsafe counterpart) is likewise separate. The per-family breakdown below shows every lane. "
     "**Unsafe Site Reduction (%)** — `(C − Rust) ÷ C`; **positive = net "
     "fewer** unsafe sites, **negative = net more** (this build is a faithful "
     "transliteration — ownership/borrow uplift is deferred — so where Rust adds "
@@ -249,9 +249,9 @@ def aggregate_block(all_rows):
     lines.append(f"| _unchecked_arith (separate lane)_ | _{fmt_n(tot('c_unchecked_arith'))}_ | "
                  f"_{fmt_n(tot('r_unchecked_arith'))}_ | _—_ |")
     # Artifact lanes — reported for transparency, excluded from the Rust total:
-    #   first_party_call — cross-TU / harness-FFI / transpiler shims.
+    #   first_party_call — harness-FFI / transpiler shims (in-project targets).
     #   intrinsic_call   — benign compiler intrinsics (assert / hints / sizes).
-    lines.append(f"| _first_party_call (cross-TU / harness-FFI — excluded)_ | "
+    lines.append(f"| _first_party_call (harness-FFI / transpiler shims — excluded)_ | "
                  f"_—_ | _{fmt_n(tot('r_first_party_call'))}_ | _—_ |")
     lines.append(f"| _intrinsic_call (benign compiler intrinsics — excluded)_ | "
                  f"_—_ | _{fmt_n(tot('r_intrinsic_call'))}_ | _—_ |")
@@ -289,12 +289,13 @@ def aggregate_block(all_rows):
         f"{sign_note}). Baseline C UOD **{c_uod}** → Emitted Rust UOD **{r_uod}** "
         f"(unsafe sites ÷ total expressions in each lane's AST).",
         deref_line,
-        "Both lanes now count the same per-crate/per-TU function population "
+        "Both lanes now count the same whole-program function population "
         "(the C funnel counts project `#include`d functions, matching the "
-        "emitter's per-crate materialisation), so the libfor-style scope outlier "
+        "emitter's whole-program materialisation — each project is emitted as "
+        "one whole-program crate), so the libfor-style scope outlier "
         "is gone. Two known residual asymmetries: (1) the emitter synthesises "
-        "helper/accessor functions absent from the C source and duplicates them "
-        "per crate (e.g. SQLite's bit-field accessors appear ~99×), inflating the "
+        "helper/accessor functions absent from the C source that carry their "
+        "own unsafe operations, inflating the "
         "Rust side; (2) genuine libc calls are free in C but explicit unsafe "
         "calls in Rust. Both push the Rust total up honestly — read the per-family "
         "split and the UOD columns, not a single number.",
@@ -357,9 +358,14 @@ def sqlite_state_cells(status_row):
                   (f"✅ all {fmt_n(files[1])} files" if files[0] == files[1]
                    else f"⚠️ {fmt_n(files[0])}/{fmt_n(files[1])} files"))
     crates = split("crates")
-    compiled = ("—" if not crates else
-                (f"✅ all {fmt_n(crates[1])} crates" if crates[0] == crates[1]
-                 else f"⚠️ {fmt_n(crates[0])}/{fmt_n(crates[1])} crates"))
+    if not crates:
+        compiled = "—"
+    elif crates == (1, 1):
+        compiled = "✅ one whole-program monocrate"
+    elif crates[0] == crates[1]:
+        compiled = f"✅ all {fmt_n(crates[1])} crates"
+    else:
+        compiled = f"⚠️ {fmt_n(crates[0])}/{fmt_n(crates[1])} crates"
     scripts = split("scripts")
     if scripts:
         mark = "✅ all" if scripts[0] == scripts[1] else "⚠️"
@@ -408,23 +414,28 @@ def render_sqlite(status_path, sites_path):
             f"({status_row.get('run_date', '?')}).</sub>")
     else:
         sr = parse_kv(sites_path)
+        c_exprs = gi(sr, "c_total_exprs")
+        r_exprs = gi(sr, "rust_exprs")
+        c_uod = f"{100.0 * gi(sr, 'c_sites') / c_exprs:.2f}%" if c_exprs else "n/a"
+        r_uod = f"{100.0 * gi(sr, 'r_sites') / r_exprs:.2f}%" if r_exprs else "n/a"
         lines.append("")
         lines.append(
             "<sub>SQLite site counts are code-generated: `cpp2rust --emit=funnel-ingest` "
-            "over the 281-TU corpus for the C side, the operation-level `unsafe_census` over "
-            "the published Rust mirror for the Rust side, reduced by "
+            "over the 84-translation-unit SQLite CLI link set (including the command-line "
+            "shell, shell.c) for the C side, the operation-level `unsafe_census` over the "
+            "emitted whole-program Rust monocrate for the Rust side, reduced by "
             "[`benchmarks/sqlite_sites_from_funnel.py`](benchmarks/sqlite_sites_from_funnel.py) "
             "into [`benchmarks/sqlite-sites.tsv`](benchmarks/sqlite-sites.tsv). "
-            f"A further **{fmt_n(gi(sr, 'r_first_party_call'))}** first-party cross-TU / "
-            f"harness-FFI calls and **{fmt_n(gi(sr, 'r_intrinsic_call'))}** benign intrinsics "
-            "are excluded from the Rust total (SQLite links 281 crates over the C ABI, so these "
-            "dominate). The remaining C→Rust gap is genuine: SQLite's Rust has ~2.8× the "
-            "function count of its C source because the emitter synthesises bit-field accessor "
-            "and helper functions (absent from the C — they are inline bit-field access "
-            "expressions there) and duplicates them into every crate (e.g. `via_coroutine` "
-            "appears ~99×), plus every libc call is an explicit `extern_unsafe_call`. Both push "
-            "the Rust total up honestly; the **UOD** columns (density, 6.5% → 7.7%) are the "
-            f"cleaner cross-lane measure. State facts recorded {status_row.get('run_date', '?')}.</sub>")
+            f"A further **{fmt_n(gi(sr, 'r_first_party_call'))}** first-party (in-project) "
+            f"calls and **{fmt_n(gi(sr, 'r_intrinsic_call'))}** benign intrinsics are excluded "
+            "from the Rust total. The C→Rust site increase is genuine and honest: this build is "
+            "a faithful transliteration (ownership/borrow uplift deferred), so every libc call "
+            "that is free in C becomes an explicit `extern_unsafe_call`, and compound C pointer "
+            "accesses are lowered into several explicit Rust derefs — those two families account "
+            "for nearly all of the increase, NOT per-crate helper duplication: the whole-program "
+            "monocrate emits ONE crate and de-duplicates origin-keyed, so the old per-TU helper "
+            f"copies are gone. The **UOD** columns (density, {c_uod} → {r_uod}) are the cleaner "
+            f"cross-lane measure. State facts recorded {status_row.get('run_date', '?')}.</sub>")
     return "\n".join(lines)
 
 
