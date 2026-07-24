@@ -11,6 +11,31 @@ Every table is rendered by
 files; the column definitions are shared and spelled out in the
 [legend](#per-project-results) below.
 
+<!-- methodology:begin -->
+## Methodology — what we measure vs. what CRUST-Bench measures
+
+We run our transpiler over the **[CRUST-Bench](https://arxiv.org/abs/2504.15254) corpus** (its 100 C projects), but we are **not** running the CRUST-Bench task, and our headline safety numbers are our **own instrument** — not a CRUST-Bench score. The two efforts measure different things.
+
+**CRUST-Bench** is an *LLM* C→safe-Rust benchmark. Each C project ships with a hand-written **safe-Rust interface** (safe signatures + ownership types) and a ported Rust test suite; a language model fills in the bodies. Its two **scored** metrics are, per whole project:
+- **Build** — does `cargo build` succeed (debug profile, warnings ignored);
+- **Test** — does `cargo test` pass all ported tests — reported as **pass@1** plus two rounds of compiler-/test-feedback repair.
+
+CRUST-Bench does **not** mechanically gate safety: there is no `#![forbid(unsafe_code)]`, `libc` is an allowed dependency (its own reference tests call `unsafe { libc::… }`), and unsafe usage is only tallied *post-hoc* as a coarse per-project flag ("does the output contain the `unsafe` keyword?"). It also **excludes** syntax-directed transpilers such as c2rust for producing too much unsafe/FFI Rust.
+
+**This project** is a *deterministic* AST transpiler — the class CRUST-Bench excludes — and it measures safety at a **finer grain**: a per-operation **unsafe-site census** (raw-pointer deref, extern/unsafe call, `static mut`, union read, transmute, inline asm) and an **Unsafe-Operation Density** (sites ÷ total expressions), computed in **two modes over identical source**:
+- **faithful** — our safety uplift *disabled*: a raw, unsafe-preserving lowering, comparable in spirit to a syntax-directed transpiler;
+- **safe** — our safety uplift *enabled* (the production default).
+
+The **faithful → safe** delta isolates exactly what our uplift removes — information CRUST-Bench's binary flag cannot express.
+
+**How to read our numbers, honestly:**
+- Our safety columns (Non-safe / Safe Sites, Site Reduction %, UOD, Unsafe Fns, Fns Made Safe) are **our own instrument**; there is no CRUST-Bench number to compare them to, and we do **not** claim to "beat" CRUST-Bench on safety.
+- The only columns that map to CRUST-Bench's published methodology are **Compiled** (≈ their Build) and **Tested / pass@1** (≈ their Test). Our pass@1 is produced differently (a mechanical splice against the reference interface, not an LLM fill-and-repair loop), so it is **not** directly comparable either.
+- Because we preserve C semantics and A/B-verify behavior, our output keeps `unsafe extern` at genuine libc/FFI edges (e.g. the SQLite lane). By CRUST-Bench's binary "no unsafe" rule that counts as unsafe — an intentional trade-off: we prioritize behavioral fidelity over an all-safe surface at the C boundary.
+
+**The claim we do stand behind:** over the same corpus, our uplift *measurably reduces unsafe operations* relative to a raw, c2rust-style lowering of the identical source — a reduction their coarse safety flag cannot see.
+<!-- methodology:end -->
+
 ## Flagship — SQLite
 
 The **84-translation-unit [SQLite](https://www.sqlite.org/) CLI link set** —

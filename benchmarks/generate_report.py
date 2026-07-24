@@ -54,6 +54,37 @@ import sys
 CRUST_BEGIN = "<!-- crust-table:begin -->"
 CRUST_END = "<!-- crust-table:end -->"
 
+# The methodology section is static prose (no result data). It lives in the
+# report's intro — before the data tables — between its own marker pair, so a
+# `--update` regeneration rewrites it in place and it survives just like the
+# generated tables. This is the ONE piece of RESULTS.md prose the generator
+# owns; the rest of the intro/headings are hand-maintained (outside all markers).
+METHODOLOGY_BEGIN = "<!-- methodology:begin -->"
+METHODOLOGY_END = "<!-- methodology:end -->"
+
+METHODOLOGY = """## Methodology — what we measure vs. what CRUST-Bench measures
+
+We run our transpiler over the **[CRUST-Bench](https://arxiv.org/abs/2504.15254) corpus** (its 100 C projects), but we are **not** running the CRUST-Bench task, and our headline safety numbers are our **own instrument** — not a CRUST-Bench score. The two efforts measure different things.
+
+**CRUST-Bench** is an *LLM* C→safe-Rust benchmark. Each C project ships with a hand-written **safe-Rust interface** (safe signatures + ownership types) and a ported Rust test suite; a language model fills in the bodies. Its two **scored** metrics are, per whole project:
+- **Build** — does `cargo build` succeed (debug profile, warnings ignored);
+- **Test** — does `cargo test` pass all ported tests — reported as **pass@1** plus two rounds of compiler-/test-feedback repair.
+
+CRUST-Bench does **not** mechanically gate safety: there is no `#![forbid(unsafe_code)]`, `libc` is an allowed dependency (its own reference tests call `unsafe { libc::… }`), and unsafe usage is only tallied *post-hoc* as a coarse per-project flag ("does the output contain the `unsafe` keyword?"). It also **excludes** syntax-directed transpilers such as c2rust for producing too much unsafe/FFI Rust.
+
+**This project** is a *deterministic* AST transpiler — the class CRUST-Bench excludes — and it measures safety at a **finer grain**: a per-operation **unsafe-site census** (raw-pointer deref, extern/unsafe call, `static mut`, union read, transmute, inline asm) and an **Unsafe-Operation Density** (sites ÷ total expressions), computed in **two modes over identical source**:
+- **faithful** — our safety uplift *disabled*: a raw, unsafe-preserving lowering, comparable in spirit to a syntax-directed transpiler;
+- **safe** — our safety uplift *enabled* (the production default).
+
+The **faithful → safe** delta isolates exactly what our uplift removes — information CRUST-Bench's binary flag cannot express.
+
+**How to read our numbers, honestly:**
+- Our safety columns (Non-safe / Safe Sites, Site Reduction %, UOD, Unsafe Fns, Fns Made Safe) are **our own instrument**; there is no CRUST-Bench number to compare them to, and we do **not** claim to "beat" CRUST-Bench on safety.
+- The only columns that map to CRUST-Bench's published methodology are **Compiled** (≈ their Build) and **Tested / pass@1** (≈ their Test). Our pass@1 is produced differently (a mechanical splice against the reference interface, not an LLM fill-and-repair loop), so it is **not** directly comparable either.
+- Because we preserve C semantics and A/B-verify behavior, our output keeps `unsafe extern` at genuine libc/FFI edges (e.g. the SQLite lane). By CRUST-Bench's binary "no unsafe" rule that counts as unsafe — an intentional trade-off: we prioritize behavioral fidelity over an all-safe surface at the C boundary.
+
+**The claim we do stand behind:** over the same corpus, our uplift *measurably reduces unsafe operations* relative to a raw, c2rust-style lowering of the identical source — a reduction their coarse safety flag cannot see."""
+
 # Wrap the wide (14-col) tables in a `.wide-table` container so they use ~80% of
 # the viewport width with their own horizontal scroll, instead of overflowing.
 # Styling lives in the linked stylesheet `results.css` (referenced from the top
@@ -513,11 +544,21 @@ def main():
         print(__doc__, file=sys.stderr)
         return 2
 
+    # Emit the static methodology section alongside the data tables so a
+    # regeneration re-emits it (round-trips) rather than dropping it. Placed
+    # first so it prints ahead of the tables in the stdout (no --update) path.
+    tables.insert(0, (METHODOLOGY_BEGIN, METHODOLOGY_END, METHODOLOGY))
+
     if update_target:
         doc = open(update_target, encoding="utf-8").read()
         for begin, end, table in tables:
             spliced = splice(doc, begin, end, table)
             if spliced is None:
+                # The methodology block is best-effort: an older RESULTS.md may
+                # predate its markers, so skip it there instead of failing the
+                # whole render. The data tables stay strict (markers required).
+                if begin == METHODOLOGY_BEGIN:
+                    continue
                 print(f"markers {begin} missing in {update_target}", file=sys.stderr)
                 return 2
             doc = spliced
