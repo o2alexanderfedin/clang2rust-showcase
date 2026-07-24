@@ -7,26 +7,26 @@ Usage:
         [--sqlite-status <tsv>] [--sqlite-sites <tsv>] [--update <RESULTS.md>]
 
 Both the CRUST-bench table and the SQLite flagship row use ONE UNIFIED column
-schema (DESIGN.md D3 + the "SQLite must be first-class + comparable" ruling) —
-the original state columns, then the Multi-Dimensional Safety Matrix:
+schema (TWO_MODE_CONTRACT.md §6) — the state columns, then the faithful-vs-safe
+safety axis and the per-function rollup:
 
     | Project | Transpiled | Compiled | Tested
-    | Original C Unsafe Sites | Emitted Rust Unsafe Sites
-    | Unsafe Site Reduction (%) | Baseline C UOD | Emitted Rust UOD |
+    | Non-safe Sites (faithful) | Safe Sites (uplift) | Site Reduction (%)
+    | Faithful UOD | Safe UOD
+    | Total Fns | Unsafe Fns (faithful) | Unsafe Fns (safe) | Fns Made Safe |
 
 SQLite is also the first row of the per-project table (labeled "flagship").
 
-Safety is measured in per-OPERATION SITES, not functions (functions are too
-coarse). The numbers come from the census/funnel instruments, NOT a regex:
+Safety compares TWO Rust emissions of the SAME program, both scored by the same
+operation-level `unsafe_census` (per-OPERATION SITES, not functions):
 
-  * C-initial sites   — `cpp2rust --emit=funnel-ingest` over each project's
-                        compile DB (the pre-lowering Clang AST; families
-                        raw_ptr_deref / static_mut / union_member).
-  * Rust-resulting    — the extended operation-level `unsafe_census` over the
-    sites               emitted Rust (families raw_ptr_deref /
-                        extern_unsafe_call / static_mut / union_read /
-                        transmute / inline_asm; `unchecked_arith` is a
-                        SEPARATE lane, and `total_exprs` is the UOD denom).
+  * Non-safe (faithful) — lab factory, all uplift segments dropped (f_* keys).
+  * Safe (uplift)       — production default, all uplift segments ON (r_* keys).
+
+The 6-family site total is `raw_ptr_deref + extern_unsafe_call + static_mut +
+union_read + transmute + inline_asm`; `unchecked_arith` / `first_party_call` /
+`intrinsic_call` / `unsafe_blocks` are separate lanes, and `*_total_exprs` is
+the UOD denominator. Per-function metrics bucket by census region LINE.
 
 CRUST-bench site data:  read per project from `<results-dir>/<project>.tsv`,
                         written by run_crust_project.sh (the driver row schema).
@@ -57,55 +57,70 @@ SQLITE_BEGIN = "<!-- sqlite-table:begin -->"
 SQLITE_END = "<!-- sqlite-table:end -->"
 
 HEADER = [
-    "| Project | Transpiled | Compiled | Tested "
-    "| Original C Unsafe Sites | Emitted Rust Unsafe Sites "
-    "| Unsafe Site Reduction (%) | Baseline C UOD | Emitted Rust UOD |",
-    "|---|---|---|---|---:|---:|---:|---:|---:|",
+    "| # | Project | Transpiled | Compiled | Tested "
+    "| Non-safe Sites (faithful) | Safe Sites (uplift) | Site Reduction (%) "
+    "| Faithful UOD | Safe UOD "
+    "| Total Fns | Unsafe Fns (faithful) | Unsafe Fns (safe) | Fns Made Safe |",
+    "|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
 ]
 
 # One legend rendered under BOTH tables so every number is defined in place.
 LEGEND = (
     "<sub>A **site** is one individual unsafe OPERATION, not a function or a "
-    "whole `unsafe {}` block (those are too coarse). "
+    "whole `unsafe {}` block. Every safety number below compares **two Rust "
+    "emissions of the same program**, both scored by the same `unsafe_census` "
+    "instrument: the **faithful** baseline (lab factory — all uplift segments "
+    "dropped, a straight transliteration) and the **safe** production default "
+    "(pointer→`Option`/span, alloc→`Box`/`Vec`, printf→`print!`, cstring-global "
+    "uplift all ON). "
     "**Transpiled / Compiled** — did cpp2rust emit, and does the emitted code "
     "build, for the C++ lane and the Rust lane (`ok/total` translation units). "
-    "**Tested** — the differential test oracles: **A/B** runs the project's own "
-    "program built from native C vs from the transpiled C++/Rust and compares "
-    "output byte-for-byte (`—` = not linkable as one binary, e.g. cross-TU C++ "
-    "name mangling or unresolved builtin FFI; logged, never silently passed); "
-    "**pass@1** is CRUST-bench's official oracle — the emitted crate spliced "
-    "under the hand-written RBench interface, then `cargo test`. For SQLite the "
-    "Tested cell is the whole-CLI differential over the SQL scripts. "
-    "**Original C Unsafe Sites** — initial unsafe operation sites in the C "
-    "source (`raw_ptr_deref + static_mut + union_member`). **Emitted Rust "
-    "Unsafe Sites** — resulting unsafe operation sites in the emitted Rust "
-    "(`raw_ptr_deref + extern_unsafe_call + static_mut + union_read + transmute "
-    "+ inline_asm`). `extern_unsafe_call` counts only GENUINELY external calls (libc / foreign symbols). A call whose target is defined elsewhere in the project - a first-party function the emitter exposes through an `extern \"C\"` boundary so the emitted crate splices under the CRUST-bench harness - plus transpiler shims and benign compiler intrinsics (assert, branch hints, object-size) are emission artifacts, NOT unsafety carried over from the C source; they are split into two separate excluded lanes, `first_party_call` (harness-FFI / transpiler shims) and `intrinsic_call` (benign compiler intrinsics), neither ever folded into the total. `unchecked_arith` (C pointer arithmetic, no Rust unsafe counterpart) is likewise separate. The per-family breakdown below shows every lane. "
-    "**Unsafe Site Reduction (%)** — `(C − Rust) ÷ C`; **positive = net "
-    "fewer** unsafe sites, **negative = net more** (this build is a faithful "
-    "transliteration — ownership/borrow uplift is deferred — so where Rust adds "
-    "sites it is mostly C's previously-hidden FFI unsafety made explicit, not "
-    "new unsafety). **Baseline C UOD** / **Emitted Rust UOD** — Unsafe-"
-    "Operation-Density: unsafe sites ÷ total expressions in that lane's own AST "
-    "(lower is safer); the denominator grows with any added scaffolding, so the "
-    "density cannot be gamed by code inflation. All counts use thousands "
+    "**Tested** — the differential oracles: **A/B** runs the project built from "
+    "native C vs from the transpiled C++/Rust and compares output byte-for-byte "
+    "(`—` = not linkable as one binary, e.g. cross-TU C++ name mangling or "
+    "unresolved builtin FFI; logged, never silently passed); **pass@1** is "
+    "CRUST-bench's official oracle — the emitted crate spliced under the "
+    "hand-written RBench interface, then `cargo test`. For SQLite the Tested "
+    "cell is the whole-CLI differential over the SQL scripts. "
+    "**Non-safe Sites (faithful)** / **Safe Sites (uplift)** — the 6-family "
+    "unsafe-site total (`raw_ptr_deref + extern_unsafe_call + static_mut + "
+    "union_read + transmute + inline_asm`) in each emission; `first_party_call` "
+    "(harness-FFI / transpiler shims), `intrinsic_call` (benign compiler "
+    "intrinsics), `unchecked_arith` (C pointer arithmetic) and whole "
+    "`unsafe_blocks` are separate lanes, never folded into the total. "
+    "**Site Reduction (%)** — `(faithful − safe) ÷ faithful`; **positive = the "
+    "uplift REMOVED unsafe sites** relative to the faithful baseline. "
+    "**Faithful UOD** / **Safe UOD** — Unsafe-Operation-Density: unsafe sites ÷ "
+    "total expressions in that emission's own AST (lower is safer; the "
+    "denominator grows with any added scaffolding, so density cannot be gamed "
+    "by code inflation). "
+    "**Total Fns** — every function-with-a-body counted (by census line, so "
+    "same-named impl/trait methods are not merged); **Unsafe Fns (faithful)** / "
+    "**Unsafe Fns (safe)** — those carrying ≥1 unsafe site in each emission; "
+    "**Fns Made Safe** — the region-keyed join: functions unsafe in the "
+    "faithful baseline that the uplift makes fully safe, shown as `n (n ÷ "
+    "unsafe-faithful)`. "
+    "Safety cells render `pending` / `n/a` for any project whose faithful OR "
+    "safe emission had a non-zero parse-error count — those projects are "
+    "excluded from the aggregate (the excluded count is reported there). "
+    "Whole-program **SQLite shows ≈0 reduction by design**: it is emitted as one "
+    "monocrate where almost every function is externally visible across the link "
+    "set, so the ownership/pointer uplifts are ABI-vetoed there to preserve the "
+    "C-ABI boundary — the site-removing signal concentrates in the smaller, "
+    "self-contained CRUST-bench projects. All counts use thousands "
     "separators.</sub>"
 )
 
-# --- driver TSV site-family keys -------------------------------------------
-C_FAMILIES = ["c_raw_ptr_deref", "c_static_mut", "c_union_member"]
-R_FAMILIES = [
-    "r_raw_ptr_deref", "r_extern_unsafe_call", "r_static_mut",
-    "r_union_read", "r_transmute", "r_inline_asm",
-]
-# (family label, C key or None, Rust key or None) for the per-family aggregate.
+# --- driver TSV site-family keys (faithful vs safe emission of the SAME program) ---
+# (family label, faithful key, safe key) for the per-family aggregate. Both
+# emissions carry all six families, so both keys are always present.
 FAMILY_ROWS = [
-    ("raw_ptr_deref", "c_raw_ptr_deref", "r_raw_ptr_deref"),
-    ("extern_unsafe_call (genuine libc/foreign)", None, "r_extern_unsafe_call"),
-    ("static_mut", "c_static_mut", "r_static_mut"),
-    ("union read", "c_union_member", "r_union_read"),
-    ("transmute", None, "r_transmute"),
-    ("inline_asm", None, "r_inline_asm"),
+    ("raw_ptr_deref", "f_raw_ptr_deref", "r_raw_ptr_deref"),
+    ("extern_unsafe_call", "f_extern_unsafe_call", "r_extern_unsafe_call"),
+    ("static_mut", "f_static_mut", "r_static_mut"),
+    ("union read", "f_union_read", "r_union_read"),
+    ("transmute", "f_transmute", "r_transmute"),
+    ("inline_asm", "f_inline_asm", "r_inline_asm"),
 ]
 
 
@@ -188,117 +203,111 @@ def pct(num, den, signed=False):
     return f"{v:.1f}%"
 
 
-def site_cells(r):
-    """The 5 Multi-Dimensional Safety Matrix cells from any row carrying site
-    keys: (Original C sites, Emitted Rust sites, Reduction %, Baseline C UOD,
-    Emitted Rust UOD). Placeholders when the row has no site data."""
-    if "c_sites" not in r and "r_sites" not in r:
-        return ("—", "—", "—", "—", "—")
-    c = gi(r, "c_sites")
+def _safety_gated_ok(r):
+    """Contract §5/§10 gate: a project's safety numbers are VALID only when BOTH
+    emissions parsed cleanly (parse_errors == 0) AND both actually produced a
+    non-empty crate (total_exprs > 0). The non-empty check guards against a
+    stale pre-two-mode TSV or an asymmetric faithful-emit failure, either of
+    which would otherwise render a nonsensical 0-faithful-vs-N-safe row —
+    impossible on real data, since faithful (uplift OFF) can never have FEWER
+    unsafe sites than the safe emission of the same program."""
+    return (gi(r, "safe_parse_errors") == 0 and gi(r, "faithful_parse_errors") == 0
+            and gi(r, "rust_exprs") > 0 and gi(r, "f_total_exprs") > 0)
+
+
+def safety_cells(r):
+    """The 9 safety-axis cells for one row, in column order:
+    (Non-safe Sites, Safe Sites, Site Reduction %, Faithful UOD, Safe UOD,
+     Total Fns, Unsafe Fns faithful, Unsafe Fns safe, Fns Made Safe).
+
+    `—` when the row carries no site data at all; `pending`/`n/a` (contract §6)
+    when a mode failed to parse — such projects are also excluded from the
+    aggregate."""
+    if "f_sites" not in r and "r_sites" not in r:
+        return ("—",) * 5 + ("—",) * 4
+    if not _safety_gated_ok(r):
+        return ("pending",) * 5 + ("n/a",) * 4
+    f = gi(r, "f_sites")
     rs = gi(r, "r_sites")
-    c_exprs = gi(r, "c_total_exprs")
+    f_exprs = gi(r, "f_total_exprs")
     r_exprs = gi(r, "rust_exprs")
-    reduction = pct(c - rs, c, signed=True) if c else "—"
-    return (fmt_n(c), fmt_n(rs), reduction, pct(c, c_exprs), pct(rs, r_exprs))
+    reduction = pct(f - rs, f, signed=True) if f else "—"
+    total_fns = gi(r, "total_fns")
+    uf = gi(r, "unsafe_fns_faithful")
+    us = gi(r, "unsafe_fns_safe")
+    made = gi(r, "fns_made_safe")
+    made_cell = f"{fmt_n(made)} ({made / uf:.0%})" if uf else f"{fmt_n(made)} (—)"
+    return (fmt_n(f), fmt_n(rs), reduction, pct(f, f_exprs), pct(rs, r_exprs),
+            fmt_n(total_fns), fmt_n(uf), fmt_n(us), made_cell)
+
+
+def project_cell(project, url):
+    """Project label linking BOTH the upstream repo (when known) and the
+    per-project safe-Rust mirror (contract §8 naming)."""
+    mirror = f"https://github.com/o2alexanderfedin/{project}-rust-mirror"
+    base = f"[{project}]({url})" if url else project
+    return f"{base} · [mirror]({mirror})"
 
 
 # ---------------------------------------------------------------------------
 # Aggregate per-family before/after block (DESIGN.md D3)
 # ---------------------------------------------------------------------------
-def _fully_transpiled_and_compiled(r):
-    """True iff BOTH lanes fully transpiled AND the Rust fully compiled — the
-    only fair apples-to-apples population. A project whose Rust never compiled
-    has a C site count but a near-zero (unparseable) Rust count, so summing it
-    into a corpus total is meaningless."""
-    if r.get("transpiled_rust") != "yes":
-        return False
-    cr = r.get("compiled_rust", "0/0")
-    try:
-        a, b = cr.split("/")
-        return int(b) > 0 and a == b
-    except ValueError:
-        return False
-
-
-def aggregate_block(all_rows):
-    # Aggregate ONLY over projects where both lanes fully transpiled and the
-    # Rust compiled — otherwise failed-transpilation projects (huge C count,
-    # ~0 Rust) dominate the sum and invent a bogus reduction. The per-project
-    # table above still shows all 100 rows honestly.
-    rows = [r for r in all_rows if _fully_transpiled_and_compiled(r)]
+def aggregate_block(all_rows, excluded=0):
+    # Aggregate the faithful→safe uplift ONLY over projects that parsed cleanly
+    # in BOTH modes (contract §5/§10). Projects with a non-zero parse-error count
+    # in either mode are excluded and counted honestly; the per-project table
+    # above still shows them as `pending`/`n/a`.
+    rows = [r for r in all_rows
+            if _safety_gated_ok(r) and ("f_sites" in r or "r_sites" in r)]
     tot = lambda k: sum(gi(r, k) for r in rows)
+    excl_note = (f"; {excluded} project(s) excluded for a non-zero parse-error "
+                 "count in one mode (shown `pending` above)" if excluded else "")
     lines = ["",
              f"**Unsafe operation sites by family — across the {len(rows)} projects "
-             "where both lanes fully transpiled and the Rust compiled** (the fair "
-             "apples-to-apples population; the other rows have a C count but little "
-             "or no compiling Rust, so a whole-corpus sum would be meaningless):",
-             "", "| Family | Sites (C) | Sites (Rust) | Δ (C−Rust) |", "|---|---:|---:|---:|"]
-    c_total = r_total = 0
-    for label, ck, rk in FAMILY_ROWS:
-        cv = tot(ck) if ck else None
-        rv = tot(rk) if rk else 0
-        if ck:
-            c_total += cv
+             f"with a clean two-mode parse** (the faithful lab baseline vs the safe "
+             f"uplift, both emissions of the same program{excl_note}):",
+             "", "| Family | Sites (faithful) | Sites (safe uplift) | Δ (faithful−safe) |",
+             "|---|---:|---:|---:|"]
+    f_total = r_total = 0
+    for label, fk, rk in FAMILY_ROWS:
+        fv = tot(fk)
+        rv = tot(rk)
+        f_total += fv
         r_total += rv
-        c_cell = fmt_n(cv) if cv is not None else "— *(not unsafe in C)*"
-        delta = "—" if cv is None else fmt_n(cv - rv)
-        lines.append(f"| {label} | {c_cell} | {fmt_n(rv)} | {delta} |")
-    lines.append(f"| **Total (memory-safety sites)** | **{fmt_n(c_total)}** | "
-                 f"**{fmt_n(r_total)}** | **{fmt_n(c_total - r_total)}** |")
-    # unchecked_arith — separate lane, reported but never folded in.
-    lines.append(f"| _unchecked_arith (separate lane)_ | _{fmt_n(tot('c_unchecked_arith'))}_ | "
+        lines.append(f"| {label} | {fmt_n(fv)} | {fmt_n(rv)} | {fmt_n(fv - rv)} |")
+    lines.append(f"| **Total (memory-safety sites)** | **{fmt_n(f_total)}** | "
+                 f"**{fmt_n(r_total)}** | **{fmt_n(f_total - r_total)}** |")
+    # Separate lanes — reported for transparency, never folded into the total.
+    lines.append(f"| _unchecked_arith (separate lane)_ | _{fmt_n(tot('r_unchecked_arith'))}_ | "
                  f"_{fmt_n(tot('r_unchecked_arith'))}_ | _—_ |")
-    # Artifact lanes — reported for transparency, excluded from the Rust total:
-    #   first_party_call — harness-FFI / transpiler shims (in-project targets).
-    #   intrinsic_call   — benign compiler intrinsics (assert / hints / sizes).
     lines.append(f"| _first_party_call (harness-FFI / transpiler shims — excluded)_ | "
                  f"_—_ | _{fmt_n(tot('r_first_party_call'))}_ | _—_ |")
     lines.append(f"| _intrinsic_call (benign compiler intrinsics — excluded)_ | "
                  f"_—_ | _{fmt_n(tot('r_intrinsic_call'))}_ | _—_ |")
-    c_exprs = tot("c_total_exprs")
+    f_exprs = tot("f_total_exprs")
     r_exprs = tot("rust_exprs")
-    c_uod = f"{100.0 * c_total / c_exprs:.2f}%" if c_exprs else "n/a"
+    f_uod = f"{100.0 * f_total / f_exprs:.2f}%" if f_exprs else "n/a"
     r_uod = f"{100.0 * r_total / r_exprs:.2f}%" if r_exprs else "n/a"
-    reduction = pct(c_total - r_total, c_total, signed=True) if c_total else "n/a"
-    # "N of M sites now safe" framing for the raw-pointer-deref memory story.
-    c_deref = tot("c_raw_ptr_deref")
-    r_deref = tot("r_raw_ptr_deref")
-    lifted_deref = c_deref - r_deref
-    if c_deref and lifted_deref >= 0:
-        deref_line = (f"Raw-pointer dereferences (the core memory-safety family): "
-                      f"**{fmt_n(lifted_deref)} of {fmt_n(c_deref)}** C deref sites "
-                      f"lifted → {fmt_n(r_deref)} remain in Rust.")
-    elif c_deref:
-        deref_line = (f"Raw-pointer dereferences (the core memory-safety family): "
-                      f"{fmt_n(c_deref)} in C → {fmt_n(r_deref)} in Rust "
-                      f"(**+{fmt_n(-lifted_deref)}**; the emitter lowers some "
-                      f"compound C accesses into several explicit Rust derefs, so a "
-                      f"per-project split — not this raw aggregate — is the honest "
-                      f"read of the memory-safety change).")
-    else:
-        deref_line = ""
-    sign_note = ("fewer unsafe sites in the emitted Rust" if (c_total - r_total) > 0
-                 else "more unsafe sites in the emitted Rust — this build is a "
-                      "faithful transliteration (ownership uplift deferred) that "
-                      "surfaces C's hidden libc-FFI unsafety as explicit "
-                      "`extern_unsafe_call`s")
+    reduction = pct(f_total - r_total, f_total, signed=True) if f_total else "n/a"
+    tot_fns = tot("total_fns")
+    uf = tot("unsafe_fns_faithful")
+    us = tot("unsafe_fns_safe")
+    made = tot("fns_made_safe")
+    made_pct = f"{100.0 * made / uf:.1f}%" if uf else "n/a"
+    sign_note = ("the uplift nets FEWER unsafe sites than the faithful baseline"
+                 if (f_total - r_total) > 0 else
+                 "the uplift did not net-remove sites in this population (see the "
+                 "SQLite ABI-veto note — the signal concentrates in smaller projects)")
     lines += [
         "",
-        f"Totals — Original C unsafe sites **{fmt_n(c_total)}** → Emitted Rust "
-        f"unsafe sites **{fmt_n(r_total)}** (Unsafe Site Reduction **{reduction}**: "
-        f"{sign_note}). Baseline C UOD **{c_uod}** → Emitted Rust UOD **{r_uod}** "
-        f"(unsafe sites ÷ total expressions in each lane's AST).",
-        deref_line,
-        "Both lanes now count the same whole-program function population "
-        "(the C funnel counts project `#include`d functions, matching the "
-        "emitter's whole-program materialisation — each project is emitted as "
-        "one whole-program crate), so the libfor-style scope outlier "
-        "is gone. Two known residual asymmetries: (1) the emitter synthesises "
-        "helper/accessor functions absent from the C source that carry their "
-        "own unsafe operations, inflating the "
-        "Rust side; (2) genuine libc calls are free in C but explicit unsafe "
-        "calls in Rust. Both push the Rust total up honestly — read the per-family "
-        "split and the UOD columns, not a single number.",
+        f"Totals — Non-safe (faithful) unsafe sites **{fmt_n(f_total)}** → Safe "
+        f"(uplift) unsafe sites **{fmt_n(r_total)}** (Site Reduction **{reduction}**: "
+        f"{sign_note}). Faithful UOD **{f_uod}** → Safe UOD **{r_uod}** (unsafe "
+        f"sites ÷ total expressions in each emission's AST).",
+        f"Function-level — of **{fmt_n(uf)}** functions carrying ≥1 unsafe site in the "
+        f"faithful baseline, the uplift makes **{fmt_n(made)}** fully safe "
+        f"(**{made_pct}**); **{fmt_n(us)}** functions still carry an unsafe site in the "
+        f"safe emission, out of **{fmt_n(tot_fns)}** functions total.",
     ]
     return "\n".join(l for l in lines if l is not None)
 
@@ -318,20 +327,28 @@ def load_rows(results_dir):
 def render_crust(results_dir, cbench_dir, sqlite_status=None, sqlite_sites=None):
     rows = load_rows(results_dir)
     lines = list(HEADER)
+    n = 0  # 1-based row number (column 1); SQLite flagship = row 1, then 2..N.
     # SQLite sits IN the per-project table as the first row (the flagship — the
     # product's primary target — shown right alongside the CRUST-bench corpus).
     if sqlite_status and os.path.isfile(sqlite_status):
-        lines.append(sqlite_row(sqlite_status, sqlite_sites, label_suffix=" — **flagship**"))
+        n += 1
+        lines.append(f"| {n} {sqlite_row(sqlite_status, sqlite_sites, label_suffix=' — **flagship**')}")
     for project, r in rows:
+        n += 1
         t, c, tested = state_cells(r)
-        cs, rs, red, cuod, ruod = site_cells(r)
+        fs, ss, red, fuod, suod, tfns, ufaith, usafe, made = safety_cells(r)
         url = upstream_url(cbench_dir, project)
-        cell = f"[{project}]({url})" if url else project
+        cell = project_cell(project, url)
         lines.append(
-            f"| {cell} | {t} | {c} | {tested} | {cs} | {rs} | {red} | {cuod} | {ruod} |")
+            f"| {n} | {cell} | {t} | {c} | {tested} | {fs} | {ss} | {red} | {fuod} | {suod} "
+            f"| {tfns} | {ufaith} | {usafe} | {made} |")
     lines.append("")
     lines.append(LEGEND)
-    lines.append(aggregate_block([r for _, r in rows]))
+    # Projects that carry site data but failed the two-mode parse gate are
+    # excluded from the aggregate; report the count honestly (contract §5/§10).
+    excluded = sum(1 for _, r in rows
+                   if ("f_sites" in r or "r_sites" in r) and not _safety_gated_ok(r))
+    lines.append(aggregate_block([r for _, r in rows], excluded=excluded))
     return "\n".join(lines)
 
 
@@ -390,17 +407,18 @@ def sqlite_row(status_path, sites_path, label_suffix=""):
     cell += label_suffix
     t, c, tested = sqlite_state_cells(status_row)
     if sites_path and os.path.isfile(sites_path):
-        cs, rs, red, cuod, ruod = site_cells(parse_kv(sites_path))
+        fs, ss, red, fuod, suod, tfns, ufaith, usafe, made = safety_cells(parse_kv(sites_path))
     else:
         # Never render stale function-granular numbers — mark honestly pending.
-        cs = rs = red = cuod = ruod = "`pending-regen`"
-    return f"| {cell} | {t} | {c} | {tested} | {cs} | {rs} | {red} | {cuod} | {ruod} |"
+        fs = ss = red = fuod = suod = tfns = ufaith = usafe = made = "`pending-regen`"
+    return (f"| {cell} | {t} | {c} | {tested} | {fs} | {ss} | {red} | {fuod} | {suod} "
+            f"| {tfns} | {ufaith} | {usafe} | {made} |")
 
 
 def render_sqlite(status_path, sites_path):
     status_row = parse_kv(status_path)
     lines = list(HEADER)
-    lines.append(sqlite_row(status_path, sites_path))
+    lines.append(f"| 1 {sqlite_row(status_path, sites_path)}")
     lines.append("")
     lines.append(LEGEND)
     if not (sites_path and os.path.isfile(sites_path)):
@@ -414,28 +432,28 @@ def render_sqlite(status_path, sites_path):
             f"({status_row.get('run_date', '?')}).</sub>")
     else:
         sr = parse_kv(sites_path)
-        c_exprs = gi(sr, "c_total_exprs")
+        f_exprs = gi(sr, "f_total_exprs")
         r_exprs = gi(sr, "rust_exprs")
-        c_uod = f"{100.0 * gi(sr, 'c_sites') / c_exprs:.2f}%" if c_exprs else "n/a"
+        f_uod = f"{100.0 * gi(sr, 'f_sites') / f_exprs:.2f}%" if f_exprs else "n/a"
         r_uod = f"{100.0 * gi(sr, 'r_sites') / r_exprs:.2f}%" if r_exprs else "n/a"
         lines.append("")
         lines.append(
-            "<sub>SQLite site counts are code-generated: `cpp2rust --emit=funnel-ingest` "
+            "<sub>SQLite site counts are code-generated two-mode: `cpp2rust --emit=rust` "
             "over the 84-translation-unit SQLite CLI link set (including the command-line "
-            "shell, shell.c) for the C side, the operation-level `unsafe_census` over the "
-            "emitted whole-program Rust monocrate for the Rust side, reduced by "
+            "shell, shell.c) emitted TWICE — the faithful lab baseline (all uplift segments "
+            "dropped) and the safe production default — each scored by the operation-level "
+            "`unsafe_census` over the emitted whole-program Rust monocrate, reduced by "
             "[`benchmarks/sqlite_sites_from_funnel.py`](benchmarks/sqlite_sites_from_funnel.py) "
             "into [`benchmarks/sqlite-sites.tsv`](benchmarks/sqlite-sites.tsv). "
             f"A further **{fmt_n(gi(sr, 'r_first_party_call'))}** first-party (in-project) "
             f"calls and **{fmt_n(gi(sr, 'r_intrinsic_call'))}** benign intrinsics are excluded "
-            "from the Rust total. The C→Rust site increase is genuine and honest: this build is "
-            "a faithful transliteration (ownership/borrow uplift deferred), so every libc call "
-            "that is free in C becomes an explicit `extern_unsafe_call`, and compound C pointer "
-            "accesses are lowered into several explicit Rust derefs — those two families account "
-            "for nearly all of the increase, NOT per-crate helper duplication: the whole-program "
-            "monocrate emits ONE crate and de-duplicates origin-keyed, so the old per-TU helper "
-            f"copies are gone. The **UOD** columns (density, {c_uod} → {r_uod}) are the cleaner "
-            f"cross-lane measure. State facts recorded {status_row.get('run_date', '?')}.</sub>")
+            "from the total. The faithful→safe delta is **≈0 by design**: SQLite is emitted as "
+            "ONE whole-program monocrate, so nearly every function is externally visible across "
+            "the link set and the ownership/pointer uplifts are ABI-vetoed there to preserve the "
+            "C-ABI boundary — the site-removing uplift signal concentrates in the smaller, "
+            "self-contained CRUST-bench projects, not here. The **UOD** columns (density, "
+            f"{f_uod} → {r_uod}) are the cleaner cross-mode measure. State facts recorded "
+            f"{status_row.get('run_date', '?')}.</sub>")
     return "\n".join(lines)
 
 

@@ -7,6 +7,10 @@ crust-bench-cache/
 target/
 Cargo.lock
 
+# Script scratch (SQLite two-mode emits, mirror staging) — always under ./temp/,
+# trap-cleaned on completion; never committed.
+/temp/
+
 # Logs
 *.log
 

@@ -112,6 +112,14 @@ ROW[r_raw_ptr_deref]=0; ROW[r_extern_unsafe_call]=0; ROW[r_first_party_call]=0; 
 ROW[r_transmute]=0; ROW[r_inline_asm]=0; ROW[r_unchecked_arith]=0; ROW[r_unsafe_blocks]=0
 ROW[r_sites]=0; ROW[rust_exprs]=0
 ROW[note]=""
+# --- two-mode faithful (non-safe) emission: NEW f_* site keys (contract §1/§3) ---
+ROW[f_raw_ptr_deref]=0; ROW[f_extern_unsafe_call]=0; ROW[f_static_mut]=0; ROW[f_union_read]=0
+ROW[f_transmute]=0; ROW[f_inline_asm]=0; ROW[f_sites]=0; ROW[f_total_exprs]=0
+# --- per-function metrics (contract §4) ---
+ROW[total_fns]=0; ROW[unsafe_fns_safe]=0; ROW[unsafe_fns_faithful]=0; ROW[fns_made_safe]=0
+# --- both-mode parse gate + best-effort faithful build (contract §5/§10) ---
+ROW[safe_parse_errors]=0; ROW[faithful_parse_errors]=0
+ROW[compiled_rust_faithful]="n/a"
 
 emit_row() {
   local out="" k
@@ -119,7 +127,11 @@ emit_row() {
            compiled_rust ab_cpp ab_rust pass1 ab_note pass1_note \
            c_raw_ptr_deref c_static_mut c_union_member c_unchecked_arith c_sites c_total_exprs \
            r_raw_ptr_deref r_extern_unsafe_call r_first_party_call r_intrinsic_call r_static_mut r_union_read r_transmute \
-           r_inline_asm r_unchecked_arith r_unsafe_blocks r_sites rust_exprs note; do
+           r_inline_asm r_unchecked_arith r_unsafe_blocks r_sites rust_exprs note \
+           f_raw_ptr_deref f_extern_unsafe_call f_static_mut f_union_read f_transmute f_inline_asm \
+           f_sites f_total_exprs \
+           total_fns unsafe_fns_safe unsafe_fns_faithful fns_made_safe \
+           safe_parse_errors faithful_parse_errors compiled_rust_faithful; do
     out+="${k}=${ROW[$k]}"$'\t'
   done
   printf '%s\n' "${out%$'\t'}" >"$TSV"
@@ -128,6 +140,40 @@ emit_row() {
 
 sum_key() { # sum_key <logfile> <key> -> total across all matching lines
   grep -hoE "$2=[0-9]+" "$1" 2>/dev/null | awk -F= '{s+=$2} END{print s+0}'
+}
+
+# region_metrics <safe_census> <faithful_census> -> "total_fns unsafe_safe unsafe_faithful made_safe"
+# Per-function safety (contract §4): the 6-family site_total is bucketed by census
+# region LINE (never by distinct region string — same-named methods must count
+# separately); `fns_made_safe` is the region-key JOIN (faithful>0 AND safe==0).
+region_metrics() {
+  python3 - "$1" "$2" <<'PY'
+import sys
+FAMS = ("raw_ptr_deref", "extern_unsafe_call", "static_mut",
+        "union_read", "transmute", "inline_asm")
+def load(path):
+    lines = []
+    try:
+        with open(path, encoding="utf-8") as f:
+            for ln in f:
+                if "region=" not in ln:
+                    continue
+                kv = dict(p.split("=", 1) for p in ln.split() if "=" in p)
+                site = sum(int(kv.get(k, 0)) for k in FAMS)
+                lines.append((kv.get("region", ""), site))
+    except OSError:
+        pass
+    return lines
+safe = load(sys.argv[1])
+faith = load(sys.argv[2])
+total_fns = len(safe)                                   # bucket by LINE
+unsafe_safe = sum(1 for _, s in safe if s > 0)
+unsafe_faith = sum(1 for _, s in faith if s > 0)
+safe_d = {r: s for r, s in safe}                        # region-key join
+faith_d = {r: s for r, s in faith}
+made = sum(1 for r, s in faith_d.items() if s > 0 and safe_d.get(r, 0) == 0)
+print(total_fns, unsafe_safe, unsafe_faith, made)
+PY
 }
 
 # ---------------------------------------------------------------------------
@@ -224,9 +270,13 @@ done
 ROW[compiled_cpp]="${n_cpp_ok}/${n_cpp}"
 log "C++ compiled ${n_cpp_ok}/${n_cpp}"
 
-# --- stage4: C -> Rust ---
+# --- stage4: C -> Rust — SAFE (uplift / production default), contract §1 ---
+# Lab toggles are explicitly unset so an inherited lab env can never leak into
+# the production-default emission that feeds the r_* keys.
 rm -rf "$RUST_OUT"; mkdir -p "$RUST_OUT"
-run_bounded "$TRANSPILE_TIMEOUT" "$TRANSPILER" --cdb "$CDB" --out-dir "$RUST_OUT" --emit=rust >>"$LOG" 2>&1
+run_bounded "$TRANSPILE_TIMEOUT" env -u C2R_LAB_FACTORY -u C2R_LAB_DROP_POINTER \
+    -u C2R_LAB_DROP_ALLOC -u C2R_LAB_DROP_PRINTF -u C2R_LAB_DROP_CSTRING_GLOBAL \
+    "$TRANSPILER" --cdb "$CDB" --out-dir "$RUST_OUT" --emit=rust >>"$LOG" 2>&1
 rust_trc=$?
 mapfile -t RUST_MANIFESTS < <(find "$RUST_OUT" -name Cargo.toml 2>/dev/null)
 n_rust=${#RUST_MANIFESTS[@]}
@@ -263,7 +313,53 @@ ROW[r_unsafe_blocks]="$(sum_key "$FUNNEL_R" unsafe_blocks)"
 ROW[rust_exprs]="$(sum_key "$FUNNEL_R" total_exprs)"
 ROW[r_sites]=$(( ROW[r_raw_ptr_deref] + ROW[r_extern_unsafe_call] + ROW[r_static_mut] \
                + ROW[r_union_read] + ROW[r_transmute] + ROW[r_inline_asm] ))
-log "Rust sites=${ROW[r_sites]} exprs=${ROW[rust_exprs]}"
+ROW[safe_parse_errors]="$(sum_key "$FUNNEL_R" parse_errors)"
+log "Rust sites=${ROW[r_sites]} exprs=${ROW[rust_exprs]} parse_errors=${ROW[safe_parse_errors]}"
+
+# --- stage4b: C -> Rust — FAITHFUL (lab factory, all uplift segments dropped) ---
+# Contract §1: SAME casing (do NOT set C2R_RUSTIC_CASING=0) so region keys join
+# 1:1 with the safe census. f_* keys are the 6-family site census of THIS crate.
+FAITHFUL_OUT="${OUT}/rust_faithful"
+rm -rf "$FAITHFUL_OUT"; mkdir -p "$FAITHFUL_OUT"
+run_bounded "$TRANSPILE_TIMEOUT" env C2R_LAB_FACTORY=1 C2R_LAB_DROP_POINTER=1 \
+    C2R_LAB_DROP_ALLOC=1 C2R_LAB_DROP_PRINTF=1 C2R_LAB_DROP_CSTRING_GLOBAL=1 \
+    "$TRANSPILER" --cdb "$CDB" --out-dir "$FAITHFUL_OUT" --emit=rust >>"$LOG" 2>&1
+
+FUNNEL_F="${OUT}/funnel_rust_faithful.log"
+"$UNSAFE_CENSUS_BIN" "$FAITHFUL_OUT" >"$FUNNEL_F" 2>>"$LOG"
+ROW[f_raw_ptr_deref]="$(sum_key "$FUNNEL_F" raw_ptr_deref)"
+ROW[f_extern_unsafe_call]="$(sum_key "$FUNNEL_F" extern_unsafe_call)"
+ROW[f_static_mut]="$(sum_key "$FUNNEL_F" static_mut)"
+ROW[f_union_read]="$(sum_key "$FUNNEL_F" union_read)"
+ROW[f_transmute]="$(sum_key "$FUNNEL_F" transmute)"
+ROW[f_inline_asm]="$(sum_key "$FUNNEL_F" inline_asm)"
+ROW[f_total_exprs]="$(sum_key "$FUNNEL_F" total_exprs)"
+ROW[f_sites]=$(( ROW[f_raw_ptr_deref] + ROW[f_extern_unsafe_call] + ROW[f_static_mut] \
+               + ROW[f_union_read] + ROW[f_transmute] + ROW[f_inline_asm] ))
+ROW[faithful_parse_errors]="$(sum_key "$FUNNEL_F" parse_errors)"
+log "Faithful sites=${ROW[f_sites]} exprs=${ROW[f_total_exprs]} parse_errors=${ROW[faithful_parse_errors]}"
+
+# --- per-function metrics (contract §4): line-bucketed counts + region-key join ---
+read -r _tf _usafe _ufaith _made < <(region_metrics "$FUNNEL_R" "$FUNNEL_F")
+ROW[total_fns]="${_tf:-0}"
+ROW[unsafe_fns_safe]="${_usafe:-0}"
+ROW[unsafe_fns_faithful]="${_ufaith:-0}"
+ROW[fns_made_safe]="${_made:-0}"
+log "fns: total=${ROW[total_fns]} unsafe_safe=${ROW[unsafe_fns_safe]} unsafe_faithful=${ROW[unsafe_fns_faithful]} made_safe=${ROW[fns_made_safe]}"
+
+# --- faithful build-check (best-effort; NEVER fails the project — contract §5) ---
+n_f_ok=0
+mapfile -t FAITHFUL_MANIFESTS < <(find "$FAITHFUL_OUT" -name Cargo.toml 2>/dev/null)
+n_f=${#FAITHFUL_MANIFESTS[@]}
+for m in "${FAITHFUL_MANIFESTS[@]}"; do
+  cdir="$(dirname "$m")"
+  if run_bounded "$COMPILE_TIMEOUT" "$RUSTC" --edition=2021 --crate-type=lib \
+       --emit=obj "$cdir/src/lib.rs" -o "$cdir/.chk.o" >>"$LOG" 2>&1; then
+    n_f_ok=$((n_f_ok + 1))
+  fi
+done
+ROW[compiled_rust_faithful]="${n_f_ok}/${n_f}"
+log "Faithful compiled ${n_f_ok}/${n_f}"
 
 # ---------------------------------------------------------------------------
 # stage3 + stage6: native-vs-transpiled A/B (best-effort; N/A logged)

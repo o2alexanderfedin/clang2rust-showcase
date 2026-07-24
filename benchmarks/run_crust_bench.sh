@@ -34,7 +34,14 @@
 # Outputs (under the --cache dir, alongside the dataset):
 #   results/<project>.tsv   Per-project honest funnel row (driver schema).
 #   results/summary.tsv     Aggregate funnel across all projects.
-#   results/REPORT.md       Rendered site-granular report.
+#   results/REPORT.md       Rendered site-granular report (cache-local copy).
+#
+# Also, at the end of a sweep, the PUBLISHED showcase report is kept in sync:
+# generate_report.py is invoked with --update RESULTS.md + --sqlite-status +
+# --sqlite-sites so the canonical benchmarks/../RESULTS.md does not drift from
+# results/REPORT.md (TWO_MODE_CONTRACT.md §5/§9.5). The per-project driver
+# self-contains BOTH emits (safe + faithful, contract §1), so no two-mode env
+# toggles are threaded through this orchestrator — it only fans the driver out.
 
 set -uo pipefail
 
@@ -69,6 +76,11 @@ CBENCH_DIR="${DATASET_DIR}/CBench"
 RBENCH_DIR="${DATASET_DIR}/RBench"
 RESULTS_DIR="${CACHE_DIR}/results"
 SUMMARY_TSV="${RESULTS_DIR}/summary.tsv"
+
+# Published showcase report + SQLite two-mode TSVs (kept in sync post-sweep).
+RESULTS_MD="${RESULTS_MD:-${SCRIPT_DIR}/../RESULTS.md}"
+SQLITE_STATUS_TSV="${SQLITE_STATUS_TSV:-${SCRIPT_DIR}/sqlite-status.tsv}"
+SQLITE_SITES_TSV="${SQLITE_SITES_TSV:-${SCRIPT_DIR}/sqlite-sites.tsv}"
 
 log() { printf '[run_crust_bench] %s\n' "$*" >&2; }
 
@@ -161,6 +173,23 @@ PY
     python3 "${SCRIPT_DIR}/generate_report.py" "$RESULTS_DIR" "$CBENCH_DIR" \
       > "${RESULTS_DIR}/REPORT.md" 2>>"${RESULTS_DIR}/report.err" \
       && log "per-project report written to ${RESULTS_DIR}/REPORT.md"
+  fi
+
+  # Sync the PUBLISHED showcase report so it never drifts from the cache-local
+  # REPORT.md (TWO_MODE_CONTRACT.md §5/§9.5). generate_report.py splices the
+  # CRUST + SQLite tables between their markers in-place; the SQLite row is fed
+  # the two-mode site + status TSVs when present. Non-fatal.
+  if command -v python3 >/dev/null 2>&1 && [ -f "$RESULTS_MD" ]; then
+    local gr_args=("$RESULTS_DIR" "$CBENCH_DIR")
+    [ -f "$SQLITE_STATUS_TSV" ] && gr_args+=(--sqlite-status "$SQLITE_STATUS_TSV")
+    [ -f "$SQLITE_SITES_TSV" ] && gr_args+=(--sqlite-sites "$SQLITE_SITES_TSV")
+    gr_args+=(--update "$RESULTS_MD")
+    if python3 "${SCRIPT_DIR}/generate_report.py" "${gr_args[@]}" \
+         >>"${RESULTS_DIR}/report.err" 2>&1; then
+      log "published report synced -> $RESULTS_MD"
+    else
+      log "warning: RESULTS.md sync failed (see ${RESULTS_DIR}/report.err) — non-fatal"
+    fi
   fi
 }
 
