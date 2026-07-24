@@ -53,6 +53,13 @@ import sys
 
 CRUST_BEGIN = "<!-- crust-table:begin -->"
 CRUST_END = "<!-- crust-table:end -->"
+
+# Wrap the wide (14-col) tables so they use ~80% of the viewport width with
+# their own horizontal scroll, instead of overflowing the page. (Renderers that
+# honor inline HTML/CSS apply the width; GitHub sanitizes `style=` — there the
+# table keeps GitHub's own column-width + scroll.)
+TABLE_OPEN = '<div style="width:80%;margin:0 auto;overflow-x:auto">'
+TABLE_CLOSE = "</div>"
 SQLITE_BEGIN = "<!-- sqlite-table:begin -->"
 SQLITE_END = "<!-- sqlite-table:end -->"
 
@@ -330,7 +337,7 @@ def load_rows(results_dir):
 
 def render_crust(results_dir, cbench_dir, sqlite_status=None, sqlite_sites=None):
     rows = load_rows(results_dir)
-    lines = list(HEADER)
+    lines = [TABLE_OPEN, ""] + list(HEADER)
     n = 0  # 1-based row number (column 1); SQLite flagship = row 1, then 2..N.
     # SQLite sits IN the per-project table as the first row (the flagship — the
     # product's primary target — shown right alongside the CRUST-bench corpus).
@@ -346,6 +353,8 @@ def render_crust(results_dir, cbench_dir, sqlite_status=None, sqlite_sites=None)
         lines.append(
             f"| {n} | {cell} | {t} | {c} | {tested} | {fs} | {ss} | {red} | {fuod} | {suod} "
             f"| {tfns} | {ufaith} | {usafe} | {made} |")
+    lines.append("")
+    lines.append(TABLE_CLOSE)
     lines.append("")
     lines.append(LEGEND)
     # Projects that carry site data but failed the two-mode parse gate are
@@ -421,8 +430,10 @@ def sqlite_row(status_path, sites_path, label_suffix=""):
 
 def render_sqlite(status_path, sites_path):
     status_row = parse_kv(status_path)
-    lines = list(HEADER)
+    lines = [TABLE_OPEN, ""] + list(HEADER)
     lines.append(f"| 1 {sqlite_row(status_path, sites_path)}")
+    lines.append("")
+    lines.append(TABLE_CLOSE)
     lines.append("")
     lines.append(LEGEND)
     if not (sites_path and os.path.isfile(sites_path)):
