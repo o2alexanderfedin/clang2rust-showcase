@@ -1,0 +1,15 @@
+/* Styling for RESULTS.md — linked from the top of that file.
+   The two-mode result tables are 14 columns wide; without this they overflow
+   the page. `.wide-table` lets them use ~80% of the viewport width and scroll
+   horizontally within that, instead of stretching or clipping the page. */
+
+.wide-table {
+  width: 80%;
+  margin: 0 auto;
+  overflow-x: auto;
+}
+
+.wide-table table {
+  width: 100%;
+  border-collapse: collapse;
+}

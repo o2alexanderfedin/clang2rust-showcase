@@ -54,11 +54,12 @@ import sys
 CRUST_BEGIN = "<!-- crust-table:begin -->"
 CRUST_END = "<!-- crust-table:end -->"
 
-# Wrap the wide (14-col) tables so they use ~80% of the viewport width with
-# their own horizontal scroll, instead of overflowing the page. (Renderers that
-# honor inline HTML/CSS apply the width; GitHub sanitizes `style=` — there the
-# table keeps GitHub's own column-width + scroll.)
-TABLE_OPEN = '<div style="width:80%;margin:0 auto;overflow-x:auto">'
+# Wrap the wide (14-col) tables in a `.wide-table` container so they use ~80% of
+# the viewport width with their own horizontal scroll, instead of overflowing.
+# Styling lives in the linked stylesheet `results.css` (referenced from the top
+# of RESULTS.md) rather than inline `style=` attributes, so it survives renderers
+# that keep <link>/class but sanitize inline styles.
+TABLE_OPEN = '<div class="wide-table">'
 TABLE_CLOSE = "</div>"
 SQLITE_BEGIN = "<!-- sqlite-table:begin -->"
 SQLITE_END = "<!-- sqlite-table:end -->"

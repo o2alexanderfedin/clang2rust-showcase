@@ -1,3 +1,5 @@
+<link rel="stylesheet" href="results.css">
+
 # Results
 
 Two measurements, one honest report: **SQLite** — the product's primary
@@ -31,7 +33,7 @@ arena-lifetime heisenbug — so publishing its numbers would not match a shipped
 verified state.
 
 <!-- sqlite-table:begin -->
-<div style="width:80%;margin:0 auto;overflow-x:auto">
+<div class="wide-table">
 
 | # | Project | Transpiled | Compiled | Tested | Non-safe Sites (faithful) | Safe Sites (uplift) | Site Reduction (%) | Faithful UOD | Safe UOD | Total Fns | Unsafe Fns (faithful) | Unsafe Fns (safe) | Fns Made Safe |
 |---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -131,7 +133,7 @@ defined in the legend rendered directly beneath the table, and the per-family
 C→Rust before/after breakdown follows it.
 
 <!-- crust-table:begin -->
-<div style="width:80%;margin:0 auto;overflow-x:auto">
+<div class="wide-table">
 
 | # | Project | Transpiled | Compiled | Tested | Non-safe Sites (faithful) | Safe Sites (uplift) | Site Reduction (%) | Faithful UOD | Safe UOD | Total Fns | Unsafe Fns (faithful) | Unsafe Fns (safe) | Fns Made Safe |
 |---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
