@@ -1,0 +1,144 @@
+[submodule "mirrors/amp-rust"]
+	path = mirrors/amp-rust
+	url = https://github.com/o2alexanderfedin/amp-rust-mirror.git
+[submodule "mirrors/approxidate-rust"]
+	path = mirrors/approxidate-rust
+	url = https://github.com/o2alexanderfedin/approxidate-rust-mirror.git
+[submodule "mirrors/bigint-rust"]
+	path = mirrors/bigint-rust
+	url = https://github.com/o2alexanderfedin/bigint-rust-mirror.git
+[submodule "mirrors/bostree-rust"]
+	path = mirrors/bostree-rust
+	url = https://github.com/o2alexanderfedin/bostree-rust-mirror.git
+[submodule "mirrors/btree-map-rust"]
+	path = mirrors/btree-map-rust
+	url = https://github.com/o2alexanderfedin/btree-map-rust-mirror.git
+[submodule "mirrors/c-blind-rsa-signatures-rust"]
+	path = mirrors/c-blind-rsa-signatures-rust
+	url = https://github.com/o2alexanderfedin/c-blind-rsa-signatures-rust-mirror.git
+[submodule "mirrors/carrays-rust"]
+	path = mirrors/carrays-rust
+	url = https://github.com/o2alexanderfedin/carrays-rust-mirror.git
+[submodule "mirrors/chtrie-rust"]
+	path = mirrors/chtrie-rust
+	url = https://github.com/o2alexanderfedin/chtrie-rust-mirror.git
+[submodule "mirrors/cissy-rust"]
+	path = mirrors/cissy-rust
+	url = https://github.com/o2alexanderfedin/cissy-rust-mirror.git
+[submodule "mirrors/cJSON-rust"]
+	path = mirrors/cJSON-rust
+	url = https://github.com/o2alexanderfedin/cJSON-rust-mirror.git
+[submodule "mirrors/cset-rust"]
+	path = mirrors/cset-rust
+	url = https://github.com/o2alexanderfedin/cset-rust-mirror.git
+[submodule "mirrors/csyncmers-rust"]
+	path = mirrors/csyncmers-rust
+	url = https://github.com/o2alexanderfedin/csyncmers-rust-mirror.git
+[submodule "mirrors/dict-rust"]
+	path = mirrors/dict-rust
+	url = https://github.com/o2alexanderfedin/dict-rust-mirror.git
+[submodule "mirrors/fft-rust"]
+	path = mirrors/fft-rust
+	url = https://github.com/o2alexanderfedin/fft-rust-mirror.git
+[submodule "mirrors/file2str-rust"]
+	path = mirrors/file2str-rust
+	url = https://github.com/o2alexanderfedin/file2str-rust-mirror.git
+[submodule "mirrors/fs_c-rust"]
+	path = mirrors/fs_c-rust
+	url = https://github.com/o2alexanderfedin/fs_c-rust-mirror.git
+[submodule "mirrors/geofence-rust"]
+	path = mirrors/geofence-rust
+	url = https://github.com/o2alexanderfedin/geofence-rust-mirror.git
+[submodule "mirrors/gorilla-paper-encode-rust"]
+	path = mirrors/gorilla-paper-encode-rust
+	url = https://github.com/o2alexanderfedin/gorilla-paper-encode-rust-mirror.git
+[submodule "mirrors/Graph-recogniser-rust"]
+	path = mirrors/Graph-recogniser-rust
+	url = https://github.com/o2alexanderfedin/Graph-recogniser-rust-mirror.git
+[submodule "mirrors/hamta-rust"]
+	path = mirrors/hamta-rust
+	url = https://github.com/o2alexanderfedin/hamta-rust-mirror.git
+[submodule "mirrors/Holdem-Odds-rust"]
+	path = mirrors/Holdem-Odds-rust
+	url = https://github.com/o2alexanderfedin/Holdem-Odds-rust-mirror.git
+[submodule "mirrors/hydra-rust"]
+	path = mirrors/hydra-rust
+	url = https://github.com/o2alexanderfedin/hydra-rust-mirror.git
+[submodule "mirrors/jccc-rust"]
+	path = mirrors/jccc-rust
+	url = https://github.com/o2alexanderfedin/jccc-rust-mirror.git
+[submodule "mirrors/kd3-rust"]
+	path = mirrors/kd3-rust
+	url = https://github.com/o2alexanderfedin/kd3-rust-mirror.git
+[submodule "mirrors/leftpad-rust"]
+	path = mirrors/leftpad-rust
+	url = https://github.com/o2alexanderfedin/leftpad-rust-mirror.git
+[submodule "mirrors/lib2bit-rust"]
+	path = mirrors/lib2bit-rust
+	url = https://github.com/o2alexanderfedin/lib2bit-rust-mirror.git
+[submodule "mirrors/libbeaufort-rust"]
+	path = mirrors/libbeaufort-rust
+	url = https://github.com/o2alexanderfedin/libbeaufort-rust-mirror.git
+[submodule "mirrors/libfor-rust"]
+	path = mirrors/libfor-rust
+	url = https://github.com/o2alexanderfedin/libfor-rust-mirror.git
+[submodule "mirrors/libpgn-rust"]
+	path = mirrors/libpgn-rust
+	url = https://github.com/o2alexanderfedin/libpgn-rust-mirror.git
+[submodule "mirrors/libutf-rust"]
+	path = mirrors/libutf-rust
+	url = https://github.com/o2alexanderfedin/libutf-rust-mirror.git
+[submodule "mirrors/libvcd-rust"]
+	path = mirrors/libvcd-rust
+	url = https://github.com/o2alexanderfedin/libvcd-rust-mirror.git
+[submodule "mirrors/Linear-Algebra-C-rust"]
+	path = mirrors/Linear-Algebra-C-rust
+	url = https://github.com/o2alexanderfedin/Linear-Algebra-C-rust-mirror.git
+[submodule "mirrors/merkle-tree-c-rust"]
+	path = mirrors/merkle-tree-c-rust
+	url = https://github.com/o2alexanderfedin/merkle-tree-c-rust-mirror.git
+[submodule "mirrors/murmurhash_c-rust"]
+	path = mirrors/murmurhash_c-rust
+	url = https://github.com/o2alexanderfedin/murmurhash_c-rust-mirror.git
+[submodule "mirrors/mvptree-rust"]
+	path = mirrors/mvptree-rust
+	url = https://github.com/o2alexanderfedin/mvptree-rust-mirror.git
+[submodule "mirrors/NandC-rust"]
+	path = mirrors/NandC-rust
+	url = https://github.com/o2alexanderfedin/NandC-rust-mirror.git
+[submodule "mirrors/Phills_DHT-rust"]
+	path = mirrors/Phills_DHT-rust
+	url = https://github.com/o2alexanderfedin/Phills_DHT-rust-mirror.git
+[submodule "mirrors/quadtree-rust"]
+	path = mirrors/quadtree-rust
+	url = https://github.com/o2alexanderfedin/quadtree-rust-mirror.git
+[submodule "mirrors/rhbloom-rust"]
+	path = mirrors/rhbloom-rust
+	url = https://github.com/o2alexanderfedin/rhbloom-rust-mirror.git
+[submodule "mirrors/rubiksolver-rust"]
+	path = mirrors/rubiksolver-rust
+	url = https://github.com/o2alexanderfedin/rubiksolver-rust-mirror.git
+[submodule "mirrors/Simple-Config-rust"]
+	path = mirrors/Simple-Config-rust
+	url = https://github.com/o2alexanderfedin/Simple-Config-rust-mirror.git
+[submodule "mirrors/Simple-Sparsehash-rust"]
+	path = mirrors/Simple-Sparsehash-rust
+	url = https://github.com/o2alexanderfedin/Simple-Sparsehash-rust-mirror.git
+[submodule "mirrors/ted-rust"]
+	path = mirrors/ted-rust
+	url = https://github.com/o2alexanderfedin/ted-rust-mirror.git
+[submodule "mirrors/tisp-rust"]
+	path = mirrors/tisp-rust
+	url = https://github.com/o2alexanderfedin/tisp-rust-mirror.git
+[submodule "mirrors/totp-rust"]
+	path = mirrors/totp-rust
+	url = https://github.com/o2alexanderfedin/totp-rust-mirror.git
+[submodule "mirrors/utf8-rust"]
+	path = mirrors/utf8-rust
+	url = https://github.com/o2alexanderfedin/utf8-rust-mirror.git
+[submodule "mirrors/vec-rust"]
+	path = mirrors/vec-rust
+	url = https://github.com/o2alexanderfedin/vec-rust-mirror.git
+[submodule "mirrors/XOpt-rust"]
+	path = mirrors/XOpt-rust
+	url = https://github.com/o2alexanderfedin/XOpt-rust-mirror.git

@@ -241,11 +241,15 @@ def safety_cells(r):
             fmt_n(total_fns), fmt_n(uf), fmt_n(us), made_cell)
 
 
-def project_cell(project, url):
-    """Project label linking BOTH the upstream repo (when known) and the
-    per-project safe-Rust mirror (contract §8 naming)."""
-    mirror = f"https://github.com/o2alexanderfedin/{project}-rust-mirror"
+def project_cell(project, url, has_mirror=True):
+    """Project label linking the upstream repo (when known) and — only when a
+    per-project safe-Rust mirror was actually published — the mirror (contract
+    §8 naming). A project that produced no safe emission has no mirror, so no
+    (dead) mirror link is emitted."""
     base = f"[{project}]({url})" if url else project
+    if not has_mirror:
+        return base
+    mirror = f"https://github.com/o2alexanderfedin/{project}-rust-mirror"
     return f"{base} · [mirror]({mirror})"
 
 
@@ -338,7 +342,7 @@ def render_crust(results_dir, cbench_dir, sqlite_status=None, sqlite_sites=None)
         t, c, tested = state_cells(r)
         fs, ss, red, fuod, suod, tfns, ufaith, usafe, made = safety_cells(r)
         url = upstream_url(cbench_dir, project)
-        cell = project_cell(project, url)
+        cell = project_cell(project, url, has_mirror=gi(r, "rust_exprs") > 0)
         lines.append(
             f"| {n} | {cell} | {t} | {c} | {tested} | {fs} | {ss} | {red} | {fuod} | {suod} "
             f"| {tfns} | {ufaith} | {usafe} | {made} |")
