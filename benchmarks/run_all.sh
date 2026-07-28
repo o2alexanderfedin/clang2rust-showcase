@@ -41,6 +41,9 @@
 # `--subset N` and no `--publish`.
 set -euo pipefail
 
+# Wall-clock: capture the start; the DONE banner prints total elapsed (start->end).
+__RUN_ALL_START_TS="$(date +%s)"
+
 # ---------------------------------------------------------------------------
 # Paths — absolute, derived from this script's location. `~/Projects` is a
 # symlink onto the same checkout, so SCRIPT_DIR-relative resolution is stable.
@@ -356,6 +359,9 @@ main() {
   stage_commit
 
   banner "DONE [$MODE]"
+  local __rt_end __rt_elapsed
+  __rt_end="$(date +%s)"; __rt_elapsed=$(( __rt_end - __RUN_ALL_START_TS ))
+  log "total wall-clock: $(( __rt_elapsed / 60 ))m $(( __rt_elapsed % 60 ))s (${__rt_elapsed}s)"
   log "RESULTS.md:      $RESULTS_MD"
   log "sqlite geiger:   $SQLITE_GEIGER_FAITHFUL + $SQLITE_GEIGER_SAFE"
   log "per-project TSV: $RESULTS_DIR"
