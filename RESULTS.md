@@ -31,7 +31,7 @@ every column is defined in the legend beneath the table.
 
 | # | Project | Transpiled | Built | Tests | Unsafe (before) | Unsafe (after) | Change |
 |---|---|---|---|---|---:|---:|---:|
-| 1 | [SQLite](https://www.sqlite.org/) → [Rust output](https://github.com/o2alexanderfedin/sqlite-rust-mirror) — **flagship** | ✅ all 84 files | ✅ one whole-program monocrate | ✅ all 10 SQL scripts byte-identical vs native CLI (3 runs) | 438,340 | 436,115 | +0.5% |
+| 1 | [SQLite](https://www.sqlite.org/) → [Rust output](https://github.com/o2alexanderfedin/sqlite-rust-mirror) — **flagship** | ✅ all 84 files | ✅ one whole-program monocrate | ✅ all 10 SQL scripts byte-identical vs native CLI (3 runs) | 440,495 | 437,558 | +0.7% |
 | 2 | [2DPartInt](https://github.com/eafit-apolo/2DPartInt) | n/a — project build broken | — | — | n/a (build) | n/a (build) | — |
 | 3 | [42-Kocaeli-Printf](https://github.com/enes2424/42-Kocaeli-Printf) | C++ ❌ · Rust ❌ | C++ 0/0 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | n/a (build) | n/a (build) | — |
 | 4 | [aes128-SIMD](https://github.com/at0m741/aes128-SIMD) | C++ ❌ · Rust ❌ | C++ 0/0 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | n/a (build) | n/a (build) | — |
@@ -63,7 +63,7 @@ every column is defined in the legend beneath the table.
 | 30 | [expr](https://github.com/radarsat1/expr) | C++ ✅ · Rust ❌ | C++ 1/2 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | n/a (build) | n/a (build) | — |
 | 31 | [FastHamming](https://github.com/BenBE/FastHamming.git) | C++ ❌ · Rust ❌ | C++ 0/0 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | n/a (build) | n/a (build) | — |
 | 32 | [fft](https://github.com/kevin0x0/fft) · [mirror](https://github.com/o2alexanderfedin/fft-rust-mirror) | C++ ✅ · Rust ✅ | C++ 0/1 · Rust 1/1 | A/B C++ —·Rust — · pass@1 — | 605 | 605 | 0.0% |
-| 33 | [file2str](https://github.com/willemt/file2str) | C++ ✅ · Rust ✅ | C++ 4/4 · Rust 0/1 | A/B C++ —·Rust — · pass@1 — | 648 | n/a (build) | — |
+| 33 | [file2str](https://github.com/willemt/file2str) | C++ ✅ · Rust ✅ | C++ 4/4 · Rust 0/1 | A/B C++ —·Rust — · pass@1 — | 650 | n/a (build) | — |
 | 34 | [fleur](https://github.com/hashlookup/fleur) | n/a — project build broken | — | — | n/a (build) | n/a (build) | — |
 | 35 | [fs_c](https://github.com/jwerle/fs.c) · [mirror](https://github.com/o2alexanderfedin/fs_c-rust-mirror) | C++ ✅ · Rust ✅ | C++ 1/1 · Rust 1/1 | A/B C++ —·Rust — · pass@1 — | 112 | 112 | 0.0% |
 | 36 | [fslib](https://github.com/c0stya/fslib) | n/a — project build broken | — | — | n/a (build) | n/a (build) | — |
@@ -77,7 +77,7 @@ every column is defined in the legend beneath the table.
 | 44 | [hydra](https://github.com/emad-elsaid/hydra) · [mirror](https://github.com/o2alexanderfedin/hydra-rust-mirror) | C++ ✅ · Rust ✅ | C++ 1/1 · Rust 1/1 | A/B C++ —·Rust — · pass@1 — | 437 | 419 | +4.1% |
 | 45 | [impcheck](https://github.com/domschrei/impcheck) | C++ ⚠️ · Rust ❌ | C++ 2/2 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | n/a (build) | n/a (build) | — |
 | 46 | [inversion_list](https://github.com/hou-12/Inversion-List-Implementation-for-Interval-Manipulation) | n/a — project build broken | — | — | n/a (build) | n/a (build) | — |
-| 47 | [jccc](https://github.com/jabacat/jccc) | C++ ✅ · Rust ✅ | C++ 12/13 · Rust 0/1 | A/B C++ —·Rust — · pass@1 — | n/a (build) | n/a (build) | — |
+| 47 | [jccc](https://github.com/jabacat/jccc) | C++ ✅ · Rust ❌ | C++ 12/13 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | n/a (build) | n/a (build) | — |
 | 48 | [kairoCompiler](https://github.com/kairo-yr/kairoCompiler) | C++ ✅ · Rust ❌ | C++ 3/10 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | n/a (build) | n/a (build) | — |
 | 49 | [kd3](https://github.com/shawnchin/kd3) · [mirror](https://github.com/o2alexanderfedin/kd3-rust-mirror) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 1/1 | A/B C++ ✅·Rust — · pass@1 — | 1,187 | 882 | +25.7% |
 | 50 | [lambda-calculus-eval](https://github.com/Lorenzobattistela/lambda-calculus-eval) | n/a — project build broken | — | — | n/a (build) | n/a (build) | — |
@@ -85,7 +85,7 @@ every column is defined in the legend beneath the table.
 | 52 | [lib2bit](https://github.com/dpryan79/lib2bit) · [mirror](https://github.com/o2alexanderfedin/lib2bit-rust-mirror) | C++ ✅ · Rust ✅ | C++ 0/1 · Rust 1/1 | A/B C++ —·Rust — · pass@1 — | 1,803 | 1,904 | −5.6% |
 | 53 | [libbase122](https://github.com/kevinAlbs/libbase122) | n/a — project build broken | — | — | n/a (build) | n/a (build) | — |
 | 54 | [libbeaufort](https://github.com/jwerle/libbeaufort) · [mirror](https://github.com/o2alexanderfedin/libbeaufort-rust-mirror) | C++ ✅ · Rust ✅ | C++ 3/3 · Rust 1/1 | A/B C++ —·Rust — · pass@1 — | 232 | 232 | 0.0% |
-| 55 | [libfor](https://github.com/cruppstahl/libfor) · [mirror](https://github.com/o2alexanderfedin/libfor-rust-mirror) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 1/1 | A/B C++ ✅·Rust — · pass@1 — | 53,779 | 53,777 | +0.0% |
+| 55 | [libfor](https://github.com/cruppstahl/libfor) · [mirror](https://github.com/o2alexanderfedin/libfor-rust-mirror) | C++ ✅ · Rust ✅ | C++ 2/2 · Rust 1/1 | A/B C++ ✅·Rust — · pass@1 — | 53,760 | 53,758 | +0.0% |
 | 56 | [libm17](https://github.com/M17-Project/libm17) | C++ ❌ · Rust ❌ | C++ 0/0 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | n/a (build) | n/a (build) | — |
 | 57 | [libpgn](https://github.com/youkwhd/libpgn) | C++ ✅ · Rust ✅ | C++ 11/12 · Rust 0/1 | A/B C++ —·Rust — · pass@1 — | n/a (build) | n/a (build) | — |
 | 58 | [libpsbt](https://github.com/jb55/libpsbt) | C++ ❌ · Rust ❌ | C++ 0/0 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | n/a (build) | n/a (build) | — |
@@ -107,7 +107,7 @@ every column is defined in the legend beneath the table.
 | 74 | [mvptree](https://github.com/michaelmior/mvptree) | C++ ✅ · Rust ✅ | C++ 3/3 · Rust 0/1 | A/B C++ —·Rust — · pass@1 — | n/a (build) | n/a (build) | — |
 | 75 | [NandC](https://github.com/Dcraftbg/NandC) | C++ ✅ · Rust ✅ | C++ 0/1 · Rust 0/1 | A/B C++ —·Rust — · pass@1 — | n/a (build) | n/a (build) | — |
 | 76 | [Phills_DHT](https://github.com/PhillipTaylor/Phills_DHT) | C++ ✅ · Rust ✅ | C++ 1/1 · Rust 0/1 | A/B C++ —·Rust — · pass@1 — | n/a (build) | n/a (build) | — |
-| 77 | [quadtree](https://github.com/thejefflarson/quadtree) · [mirror](https://github.com/o2alexanderfedin/quadtree-rust-mirror) | C++ ✅ · Rust ✅ | C++ 5/5 · Rust 1/1 | A/B C++ ✅·Rust ✅ · pass@1 — | 1,025 | 1,026 | −0.1% |
+| 77 | [quadtree](https://github.com/thejefflarson/quadtree) | C++ ✅ · Rust ❌ | C++ 5/5 · Rust 0/0 | A/B C++ ✅·Rust — · pass@1 — | 1,025 | n/a (build) | — |
 | 78 | [razz_simulation](https://github.com/eus/razz_simulation) | C++ ✅ · Rust ❌ | C++ 0/1 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | n/a (build) | n/a (build) | — |
 | 79 | [rbtree-lab](https://github.com/jwowo/rbtree-lab) | n/a — project build broken | — | — | n/a (build) | n/a (build) | — |
 | 80 | [recordManager](https://github.com/prachikotadia/-Record-Manager) | C++ ⚠️ · Rust ❌ | C++ 7/7 · Rust 0/0 | A/B C++ —·Rust — · pass@1 — | n/a (build) | n/a (build) | — |
@@ -137,5 +137,5 @@ every column is defined in the legend beneath the table.
 
 <sub>Measured by **cargo-geiger v0.13.0** (crates.io). Each project is transpiled twice from the same source — once **without** safety uplifting (*before*) and once **with** it (*after*) — and both Rust outputs are measured by cargo-geiger. **Transpiled** — the transpiler emitted output (C++ lane · Rust lane). **Built** — the emitted code compiles (`ok/total` translation units or crates). **Tests** — the differential oracles: **A/B** compares the native-C binary's output byte-for-byte with the transpiled C++/Rust binary (`—` = not linkable as one binary); **pass@1** is CRUST-bench's official oracle (the emitted crate spliced under the hand-written RBench interface, then `cargo test`). For SQLite, Tests is the whole-CLI differential over the SQL scripts. **Unsafe (before) / Unsafe (after)** — cargo-geiger's Expressions count in each emission. **Change** — `(before − after) ÷ before`, signed: positive = the uplift removed unsafe expressions, negative = worse. cargo-geiger's five categories (all stored per mode in the raw per-mode JSON files; the table shows Expressions): **Functions** — unsafe function definitions vs safe; **Expressions** — individual unsafe operations (e.g. raw-pointer dereferences) inside unsafe code; **Impls** — unsafe trait implementations; **Traits** — unsafe trait declarations; **Methods** — unsafe methods in impls. Crate safety tiers, as cargo-geiger reports them: 🔒 no unsafe usage found and the crate declares `#![forbid(unsafe_code)]`; ❓ no unsafe usage found, forbid not declared; ☢️ unsafe usage found. Emitted crates do not declare `forbid(unsafe_code)`, so a fully-safe result reads ❓ under geiger's own rules. `n/a (build)` — that mode did not compile, so geiger cannot measure it; `pending` — not yet measured. Projects without a clean both-mode measurement are excluded from the aggregate (count disclosed).</sub>
 
-**Aggregate over the 16 both-mode-measured project(s):** before 64,272 → after 63,578 unsafe expressions (Change +1.1%); 84 project(s) excluded (n/a (build)).
+**Aggregate over the 15 both-mode-measured project(s):** before 63,228 → after 62,533 unsafe expressions (Change +1.1%); 85 project(s) excluded (n/a (build)).
 <!-- crust-table:end -->
