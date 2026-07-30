@@ -12,6 +12,7 @@ that compiles and behaves identically to the original.
 | Metric | Result |
 |---|---|
 | Compiles | 281 / 281 SQLite corpus translation units produce Rust that compiles (rustc obj-OK) |
+| Transpilation speed | The 84-TU SQLite CLI link set transpiles in 41 s — about 5,200 source LOC/s in (211,984 C LOC) and 10,700 LOC/s out (439,054 Rust LOC), or 488 ms per translation unit. That covers the full pipeline: Clang parse with headers expanded, every C++ rebuild stage, the Clang-AST → Rust-AST conversion, the Rust-side passes, and emit. Measured under CPU contention, so it is a lower bound |
 | Behavioral parity | The complete SQLite command-line shell, transpiled to Rust, is byte-identical to the native build across 10 SQL test scripts, reproduced 3× under an allocator-hardened harness. Flagship row: [RESULTS.md](RESULTS.md) |
 | Safety | Measured two-mode by [cargo-geiger v0.13.0](https://crates.io/crates/cargo-geiger): each project is transpiled without and with safety uplifting, and both Rust outputs are geiger-scored. Fresh sweep numbers pending — see [RESULTS.md](RESULTS.md) |
 | CRUST-bench (100 third-party C repos) | Full two-mode sweep pending under the cargo-geiger instrument — per-project table in [RESULTS.md](RESULTS.md) |
