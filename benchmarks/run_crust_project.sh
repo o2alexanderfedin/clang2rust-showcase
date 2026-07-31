@@ -40,7 +40,8 @@
 #   TRANSPILER          cpp2rust binary   (freshly built in the worktree)
 #   GEIGER_SCORE        bench/metrics/geiger_score.sh (parent repo)
 #   CACHE_DIR           dataset+results cache root
-#   CXX / CC / RUSTC    toolchain (default: Homebrew LLVM clang++/clang; rustup)
+#   CXX / CC / RUSTC    toolchain (default: Homebrew LLVM clang++/clang; the
+#                       SAME pinned nightly the SQLite lane uses — see RUSTC below)
 #   *_TIMEOUT           per-step wall-clock limits (seconds)
 
 set -uo pipefail
@@ -75,7 +76,19 @@ GEIGER_SCORE="${GEIGER_SCORE:-$(_default_geiger)}"
 pick() { for c in "$@"; do command -v "$c" >/dev/null 2>&1 && { echo "$c"; return; }; done; echo "$1"; }
 CXX="${CXX:-$(pick /opt/homebrew/opt/llvm/bin/clang++ clang++)}"
 CC="${CC:-$(pick /opt/homebrew/opt/llvm/bin/clang clang)}"
-RUSTC="${RUSTC:-$(rustup which rustc 2>/dev/null || command -v rustc || echo rustc)}"
+# RUSTC — the SAME pinned nightly the SQLite lane pins in
+# `bench/sqlite-c17/cli_oracle/build_transpiled_monocrate.sh`. This is a
+# MEASUREMENT-CORRECTNESS requirement, not a preference: the emitter writes
+# `#![feature(c_variadic)]` into any crate whose C had a variadic function
+# (`LowerCtx::needs_c_variadic`), and a stable toolchain rejects that outright
+# with E0554 — scoring the project as a BUILD FAILURE for a reason that has
+# nothing to do with translation quality. Measured on the 2026-07-29 sweep:
+# 8 projects hit E0554, and re-checking every emitted crate under the pinned
+# nightly took the fully-build-clean count from 15 to 24 with ZERO projects
+# lost. Falling back to rustup's default when the pin is absent keeps the
+# harness runnable on a fresh machine, at the cost of re-introducing the skew.
+RUSTC_PIN="${RUSTC_PIN:-$HOME/.rustup/toolchains/nightly-2026-02-11-aarch64-apple-darwin/bin/rustc}"
+RUSTC="${RUSTC:-$([ -x "$RUSTC_PIN" ] && echo "$RUSTC_PIN" || (rustup which rustc 2>/dev/null || command -v rustc || echo rustc))}"
 CARGO="${CARGO:-$(rustup which cargo 2>/dev/null || command -v cargo || echo cargo)}"
 
 CDB_TIMEOUT="${CDB_TIMEOUT:-120}"
