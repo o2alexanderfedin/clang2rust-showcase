@@ -363,7 +363,13 @@ def main(argv=None):
     sqlite_geiger_faithful = take_flag(args, "--sqlite-geiger-faithful")
     sqlite_geiger_safe = take_flag(args, "--sqlite-geiger-safe")
 
-    results_dir = args[0] if args and os.path.isdir(args[0]) else None
+    # A results dir that was named but is not there is an error, never "no
+    # projects": rendering without it would drop every project row, and
+    # --update would publish that stripped table over RESULTS.md.
+    if args and not os.path.isdir(args[0]):
+        print(f"results directory not found: {args[0]}", file=sys.stderr)
+        return 2
+    results_dir = args[0] if args else None
     cbench_dir = (args[1] if len(args) > 1 and os.path.isdir(args[1])
                   else None)
     if not results_dir and not sqlite_status:
