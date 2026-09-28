@@ -224,6 +224,41 @@ class SpliceTest(unittest.TestCase):
         self.assertIsNone(gr.splice("no markers here", "T"))
 
 
+class MainTest(unittest.TestCase):
+    """The CLI must never publish a table built from a results directory it
+    could not find: that table has only the SQLite row, so --update would
+    silently replace every project row in RESULTS.md."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.status = os.path.join(self.tmp.name, "sqlite-status.tsv")
+        with open(self.status, "w", encoding="utf-8") as f:
+            f.write("name=SQLite\tfiles=84/84\tcrates=1/1\tscripts=10/10\n")
+        self.doc_path = os.path.join(self.tmp.name, "RESULTS.md")
+        self.doc = (f"{gr.TABLE_BEGIN}\n| 1 | SQLite |\n| 2 | alpha |\n"
+                    f"{gr.TABLE_END}\n")
+        with open(self.doc_path, "w", encoding="utf-8") as f:
+            f.write(self.doc)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_missing_results_dir_fails_and_leaves_results_md_untouched(self):
+        missing = os.path.join(self.tmp.name, "no-such-results")
+        rc = gr.main([missing, "--sqlite-status", self.status,
+                      "--update", self.doc_path])
+        self.assertNotEqual(rc, 0)
+        with open(self.doc_path, encoding="utf-8") as f:
+            self.assertEqual(f.read(), self.doc)
+
+    def test_sqlite_only_render_without_results_dir_still_works(self):
+        rc = gr.main(["--sqlite-status", self.status,
+                      "--update", self.doc_path])
+        self.assertEqual(rc, 0)
+        with open(self.doc_path, encoding="utf-8") as f:
+            self.assertNotIn("| 2 | alpha |", f.read())
+
+
 class ChangeCellTest(unittest.TestCase):
     def test_signed_arithmetic(self):
         self.assertEqual(gr.change_cell(100, 40), "+60.0%")
